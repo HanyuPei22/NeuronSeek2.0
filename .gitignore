@@ -1,0 +1,36 @@
+# Data and Results
+data/
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Models
+*.pth
+*.pt
+*.ckpt
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+venv/
+env/
