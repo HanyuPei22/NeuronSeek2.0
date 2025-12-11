@@ -21,7 +21,7 @@ class PolynomialConv2d(nn.Module):
         for order in structure.get('pure', []):
             if order == 1: continue
             # Logic: x -> x^n -> Conv1x1 -> Out
-            # We use a bottleneck to save params if needed, or direct mapping
+            # We use a  bottleneck to save params if needed, or direct mapping
             # Here we use direct mapping: Element-wise Power -> Conv
             self.poly_terms[f'pure_{order}_conv'] = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
             self.poly_terms[f'pure_{order}_bn'] = nn.BatchNorm2d(out_channels)
