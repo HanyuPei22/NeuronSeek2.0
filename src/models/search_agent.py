@@ -55,44 +55,66 @@ class SearchAgent(nn.Module):
                 print(f"Epoch {epoch+1}: Loss {total_loss/len(loader):.4f}")
 
     def _prune_insignificant_terms(self, threshold):
-        print("\n[STRidge] Pruning Check...")
-        with torch.no_grad():
-            # 1. Collect all energies to find global max
-            energies = []
-            term_info = [] # (type, index, energy)
+            """
+            Prunes based on the 'Effective Contribution' to the output logits.
+            This normalizes for the parameter size differences between Pure (D->C) and Interaction (R->C).
+            """
+            print("\n[STRidge] Analyzing Effective Contribution (Data-Driven Estimation)...")
+            
+            with torch.no_grad():
+                stats = [] # (type, order, effective_magnitude)
+                
+                for i in range(self.core.poly_order):
+                    # --- 1. Pure Stream Effective Mag ---
+                    # W_pure is [Input_Dim, Classes]
+                    # Effective Strength ~ Average per-parameter contribution
+                    w_pure = self.core.coeffs_pure[i]
+                    # Divide by sqrt(numel) to make it independent of input dimension size
+                    mag_pure = w_pure.norm(p='fro') / (w_pure.numel() ** 0.5)
+                    
+                    stats.append(('pure', i, mag_pure.item()))
 
-            for i in range(self.core.poly_order):
-                # Pure Energy
-                e_pure = torch.norm(self.core.coeffs_pure[i], p='fro').item()
-                energies.append(e_pure)
-                term_info.append(('pure', i, e_pure))
+                    # --- 2. Interaction Stream Effective Mag ---
+                    # This simulates the reconstruction: ||W_eff|| <= ||U|| * ||V|| * ||K||
+                    
+                    # A. Product of Factor Norms (Average norm per rank column)
+                    factor_product = 1.0
+                    for f in self.core.factors[i]: # List of U matrices
+                        # f shape: [Input, Rank]. We want avg column norm.
+                        f_norm = f.norm(p='fro') / (f.shape[0] ** 0.5) 
+                        factor_product *= f_norm
+                    
+                    # B. Coefficient Norm (K)
+                    k = self.core.coeffs_interact[i] # [Rank, Classes]
+                    k_norm = k.norm(p='fro') / (k.shape[0] ** 0.5)
+                    
+                    # C. Total Effective Strength
+                    mag_int = factor_product * k_norm
+                    
+                    stats.append(('interact', i, mag_int.item()))
+
+                # --- Compare and Prune ---
+                # Find the strongest term across BOTH streams
+                max_mag = max([s[2] for s in stats]) + 1e-9
                 
-                # Interaction Energy
-                e_int = torch.norm(self.core.coeffs_interact[i], p='fro').item()
-                energies.append(e_int)
-                term_info.append(('interact', i, e_int))
-            
-            max_e = max(energies) + 1e-9
-            
-            # 2. Prune based on relative ratio
-            for (type_str, i, e) in term_info:
-                ratio = e / max_e
-                
-                if type_str == 'pure':
-                    if ratio < threshold:
-                        print(f" -> Pruning Pure x^{i+1} (Ratio: {ratio:.3f})")
-                        self.core.mask_pure[i] = 0.0
-                        self.core.coeffs_pure[i].fill_(0.0)
+                for (type_str, i, mag) in stats:
+                    ratio = mag / max_mag
+                    
+                    if type_str == 'pure':
+                        if ratio < threshold:
+                            print(f" -> Pruning Pure x^{i+1} (Eff.Mag: {mag:.4f}, Ratio: {ratio:.3f})")
+                            self.core.mask_pure[i] = 0.0
+                            self.core.coeffs_pure[i].fill_(0.0)
+                        else:
+                            print(f" -> Keeping Pure x^{i+1} (Eff.Mag: {mag:.4f}, Ratio: {ratio:.3f})")
                     else:
-                        print(f" -> Keeping Pure x^{i+1} (Ratio: {ratio:.3f})")
-                else:
-                    if ratio < threshold:
-                        print(f" -> Pruning Interaction Order {i+1} (Ratio: {ratio:.3f})")
-                        self.core.mask_interact[i] = 0.0
-                        self.core.coeffs_interact[i].fill_(0.0)
-                    else:
-                        print(f" -> Keeping Interaction Order {i+1} (Ratio: {ratio:.3f})")
-        print("--------------------------\n")
+                        if ratio < threshold:
+                            print(f" -> Pruning Interaction Order {i+1} (Eff.Mag: {mag:.4f}, Ratio: {ratio:.3f})")
+                            self.core.mask_interact[i] = 0.0
+                            self.core.coeffs_interact[i].fill_(0.0)
+                        else:
+                            print(f" -> Keeping Interaction Order {i+1} (Eff.Mag: {mag:.4f}, Ratio: {ratio:.3f})")
+            print("--------------------------\n")
 
     def get_discovered_orders(self):
         """
