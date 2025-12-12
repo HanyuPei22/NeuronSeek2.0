@@ -5,11 +5,15 @@ from src.core.tensor_interaction import TensorInteractionLayer
 
 class SearchAgent(nn.Module):
     # Increased default reg_lambda to 0.01 to encourage sparsity
-    def __init__(self, input_dim=512, num_classes=10, rank=32, poly_order=3, reg_lambda=0.01):
+    def __init__(self, input_dim=512, num_classes=10, rank=32, poly_order=3, reg_lambda=0.1, task_type='classification'):
         super().__init__()
         self.core = TensorInteractionLayer(input_dim, num_classes, rank, poly_order)
         self.reg_lambda = reg_lambda
-        self.criterion = nn.CrossEntropyLoss()
+        
+        if task_type == 'classification':
+            self.criterion = nn.CrossEntropyLoss()
+        else:
+            self.criterion = nn.MSELoss()
 
     def fit_stridge(self, dataset, epochs=50, batch_size=64, device='cuda'):
         self.to(device)
