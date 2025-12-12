@@ -39,9 +39,9 @@ class SearchAgent(nn.Module):
                 
                 # Zero out gradients for pruned terms
                 for i in range(self.core.poly_order):
-                    if self.core.mask_interact[i] == 0:
+                    if self.core.mask_interact[i] == 0 and self.core.coeffs_interact[i].grad is not None:
                         self.core.coeffs_interact[i].grad.fill_(0.0)
-                    if self.core.mask_pure[i] == 0:
+                    if self.core.mask_pure[i] == 0 and self.core.coeffs_pure[i].grad is not None:
                         self.core.coeffs_pure[i].grad.fill_(0.0)
                         
                 optimizer.step()
