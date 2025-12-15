@@ -19,8 +19,8 @@ HYPERPARAMS = {
     'num_classes': 1,      # Regression task
     'rank': 8,             # CP-Rank for Interaction Stream
     'poly_order': 5,       # Challenge: Search up to order 5
-    'reg_lambda': 0.1,    # Strength of Group Lasso (Increase if too much noise)
-    'threshold': 0.05,     # Pruning threshold relative to max energy (Lower if weak signals are lost)
+    'reg_lambda': 0.01,    # Strength of Group Lasso (Increase if too much noise)
+    'threshold': 0.1,     # Pruning threshold relative to max energy (Lower if weak signals are lost)
     'epochs': 50,          # Training duration
     'lr': 1e-3,            # Learning rate
     'noise_level': 0.01    # Observation noise in y

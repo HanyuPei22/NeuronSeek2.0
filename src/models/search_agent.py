@@ -11,46 +11,51 @@ class SearchAgent(nn.Module):
         self.criterion = nn.CrossEntropyLoss() if task_type == 'classification' else nn.MSELoss()
 
     def fit_stridge(self, dataset, epochs=50, batch_size=64, device='cuda', prune_threshold=0.05):
-        self.to(device)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        
-        print(f"--- Search Start: Order={self.core.poly_order}, Reg={self.reg_lambda}, Thres={prune_threshold} ---")
-        
-        for epoch in range(epochs):
-            self.train()
+            self.to(device)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            optimizer = optim.Adam(self.parameters(), lr=1e-3)
             
-            # Pruning schedule: Execute halfway through training
-            if epoch == epochs // 2:
-                self._prune_terms(threshold=prune_threshold)
+            # [Strategy] Warmup: Do not apply regularization in the first 20% of epochs
+            # This allows the complex Interaction Stream (CP) to learn initial patterns
+            # before the sparsity constraint kicks in.
+            warmup_epochs = int(epochs * 0.2) 
+            
+            print(f"--- Search Start: Order={self.core.poly_order}, Reg={self.reg_lambda}, Warmup={warmup_epochs} ---")
+            
+            for epoch in range(epochs):
+                self.train()
+                
+                # Dynamic Regularization Schedule
+                current_reg_lambda = 0.0 if epoch < warmup_epochs else self.reg_lambda
 
-            total_loss = 0
-            for X, y in loader:
-                X, y = X.to(device), y.to(device)
-                optimizer.zero_grad()
+                if epoch == epochs // 2:
+                    self._prune_terms(threshold=prune_threshold)
+
+                total_loss = 0
+                for X, y in loader:
+                    X, y = X.to(device), y.to(device)
+                    optimizer.zero_grad()
+                    
+                    logits, loss_coeffs = self.core(X)
+                    
+                    loss_factors = 0.0
+                    for i in range(self.core.poly_order):
+                        if self.core.mask_interact[i] == 1.0:
+                            for f in self.core.factors[i]:
+                                loss_factors += torch.norm(f, p='fro')
+                    
+                    # Reduced factor penalty to 0.01 to avoid killing learning capability
+                    total_reg = loss_coeffs + 0.01 * loss_factors
+                    
+                    loss = self.criterion(logits, y) + current_reg_lambda * total_reg
+                    loss.backward()
+                    
+                    self._mask_gradients()     
+                    optimizer.step()
+                    total_loss += loss.item()
                 
-                logits, loss_coeffs = self.core(X)
-                
-                # [CRITICAL] Penalize Factors (U, V) to prevent scale hiding.
-                # Otherwise, model inflates U/V to keep K small, evading regularization.
-                loss_factors = 0.0
-                for i in range(self.core.poly_order):
-                    if self.core.mask_interact[i] == 1.0:
-                        for f in self.core.factors[i]:
-                            loss_factors += torch.norm(f, p='fro')
-                
-                # Total Loss = Task Loss + Lasso(Coeffs) + 0.1 * Lasso(Factors)
-                loss = self.criterion(logits, y) + self.reg_lambda * (loss_coeffs + 0.1 * loss_factors)
-                loss.backward()
-                
-                # Zero gradients for pruned terms to ensure they stay dead
-                self._mask_gradients()
-                        
-                optimizer.step()
-                total_loss += loss.item()
-            
-            if (epoch+1) % 10 == 0:
-                print(f"Epoch {epoch+1}: Loss {total_loss/len(loader):.4f}")
+                if (epoch+1) % 10 == 0:
+                    print(f"Epoch {epoch+1}: Loss {total_loss/len(loader):.4f}")
 
     def _prune_terms(self, threshold):
         print("\n[Pruning] Analyzing Effective Contribution...")
