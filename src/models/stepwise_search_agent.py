@@ -184,15 +184,24 @@ class StepwiseSearchAgent(nn.Module):
                 optimizer.step()
 
     def _calculate_complexity(self, p_set, i_set):
-        """
-        Theoretical Parameter Count (Degrees of Freedom).
-        Pure: D params per order.
-        Interact: 2*D*R + R params per order (CP Rank).
-        """
-        k = 0
-        k += len(p_set) * self.input_dim
-        k += len(i_set) * (2 * self.input_dim * self.rank + self.rank)
-        return k
+            """
+            Calculates 'Effective Complexity' based on Group Lasso theory (Yuan & Lin, 2006).
+            
+            Instead of summing raw parameter counts (which punishes CP decomposition too hard),
+            we use the SQUARE ROOT of the parameter count for each group.
+            
+            Formula: k_eff = sum(sqrt(p_g)) for active groups g.
+            """
+            k_eff = 0.0
+            
+            group_size_pure = self.input_dim
+            k_eff += len(p_set) * np.sqrt(group_size_pure)
+
+            group_size_interact = (2 * self.input_dim * self.rank) + self.rank
+            k_eff += len(i_set) * np.sqrt(group_size_interact)
+        
+            
+            return k_eff
 
     def _update_masks(self, p_set=None, i_set=None):
         if p_set is None: p_set = self.active_pure
