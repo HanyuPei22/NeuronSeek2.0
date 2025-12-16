@@ -200,7 +200,6 @@ class StepwiseSearchAgent(nn.Module):
             group_size_interact = (2 * self.input_dim * self.rank) + self.rank
             k_eff += len(i_set) * np.sqrt(group_size_interact)
         
-            
             return k_eff
 
     def _update_masks(self, p_set=None, i_set=None):
@@ -212,12 +211,19 @@ class StepwiseSearchAgent(nn.Module):
             self.core.mask_interact[i] = 1.0 if (i + 1) in i_set else 0.0
 
     def _init_new_terms(self, p_set, i_set):
+
+        # initial coefficients/ coeff tensor K
         for p in p_set:
             if p not in self.active_pure:
-                nn.init.normal_(self.core.coeffs_pure[p-1], std=0.01)
+                nn.init.xavier_normal_(self.core.coeffs_pure[p-1], gain=1.0)
         for i in i_set:
             if i not in self.active_interact:
-                nn.init.normal_(self.core.coeffs_interact[i-1], std=0.01)
+                nn.init.xavier_normal_(self.core.coeffs_interact[i-1], gain=1.0)
+
+                # initialize factor tensor U and V
+                for f in self.core.factors[i-1]:
+                    nn.init.xavier_normal_(f, gain=1.0)
+
 
     def _mask_gradients(self):
         for i in range(self.max_order):
