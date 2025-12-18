@@ -44,7 +44,7 @@ class StepwiseSearchAgent(nn.Module):
         LR_INTERACT = 0.02
         
         # 1. Baseline: Train Bias only
-        mse, bic = self._evaluate_configuration(self.active_pure, self.active_interact, train_loader, val_loader, epochs=10)
+        mse, bic = self._evaluate_configuration(self.active_pure, self.active_interact, train_loader, val_loader, epochs=10,lr_pure=LR_PURE, lr_int=LR_INTERACT)
         self.best_bic = bic
         print(f"[Step 0] Baseline (Bias): MSE={mse:.5f}, BIC={bic:.2f}")
 
@@ -98,14 +98,12 @@ class StepwiseSearchAgent(nn.Module):
         # Set masks & Initialize new terms (Warm Start for others)
         self._update_masks(p_set, i_set)
         self._init_new_terms(p_set, i_set)
-        params = [
-            {'params': self.core.coeffs_pure, 'lr': lr_pure},
-            {'params': self.core.coeffs_interact, 'lr': lr_int},
-            {'params': self.core.factors, 'lr': lr_int}
-        ]
-        
-        # Train (Probing with higher LR)
-        optimizer = optim.Adam(params)
+        optimizer = optim.Adam([
+                    {'params': self.core.coeffs_pure.parameters(), 'lr': lr_pure},
+                    {'params': self.core.coeffs_interact.parameters(), 'lr': lr_int},
+                    {'params': self.core.factors.parameters(), 'lr': lr_int}
+                ])
+
         self.train()
         for _ in range(epochs):
             for X, y in train_loader:
@@ -180,13 +178,12 @@ class StepwiseSearchAgent(nn.Module):
         """Updates weights permanently after a decision."""
         self._update_masks(self.active_pure, self.active_interact)
 
-        params = [
-            {'params': self.core.coeffs_pure, 'lr': lr_pure},
-            {'params': self.core.coeffs_interact, 'lr': lr_int},
-            {'params': self.core.factors, 'lr': lr_int}
-        ]
-
-        optimizer = optim.Adam(params)
+        optimizer = optim.Adam([
+                    {'params': self.core.coeffs_pure.parameters(), 'lr': lr_pure},
+                    {'params': self.core.coeffs_interact.parameters(), 'lr': lr_int},
+                    {'params': self.core.factors.parameters(), 'lr': lr_int}
+                ])
+        
         self.train()
         for _ in range(epochs):
             for X, y in train_loader:
@@ -230,14 +227,14 @@ class StepwiseSearchAgent(nn.Module):
         # initial coefficients/ coeff tensor K
         for p in p_set:
             if p not in self.active_pure:
-                nn.init.xavier_normal_(self.core.coeffs_pure[p-1], gain=1.0)
+                nn.init.xavier_normal_(self.core.coeffs_pure[p- 1], gain=1.0)
         for i in i_set:
             if i not in self.active_interact:
-                nn.init.xavier_normal_(self.core.coeffs_interact[i-1], gain=2.0)
+                nn.init.xavier_normal_(self.core.coeffs_interact[i-1], gain=1.5)
 
                 # initialize factor tensor U and V
                 for f in self.core.factors[i-1]:
-                    nn.init.xavier_normal_(f, gain=2.0)
+                    nn.init.xavier_normal_(f, gain=1.5)
 
 
     def _mask_gradients(self):
