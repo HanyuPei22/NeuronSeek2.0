@@ -39,6 +39,9 @@ class StepwiseSearchAgent(nn.Module):
         Main entry point for the stepwise search process.
         """
         print(f"--- Starting Stepwise Search (Max Order={self.max_order}) ---")
+
+        LR_PURE = 0.005
+        LR_INTERACT = 0.02
         
         # 1. Baseline: Train Bias only
         mse, bic = self._evaluate_configuration(self.active_pure, self.active_interact, train_loader, val_loader, epochs=10)
@@ -51,11 +54,11 @@ class StepwiseSearchAgent(nn.Module):
             
             # --- Probe A: Try adding Pure Term ---
             p_cand = self.active_pure | {order}
-            _, bic_p = self._evaluate_configuration(p_cand, self.active_interact, train_loader, val_loader)
+            _, bic_p = self._evaluate_configuration(p_cand, self.active_interact, train_loader, val_loader, lr_pure=LR_PURE, lr_int=LR_INTERACT)
             
             # --- Probe B: Try adding Interaction Term ---
             i_cand = self.active_interact | {order}
-            _, bic_i = self._evaluate_configuration(self.active_pure, i_cand, train_loader, val_loader)
+            _, bic_i = self._evaluate_configuration(self.active_pure, i_cand, train_loader, val_loader, lr_pure=LR_PURE, lr_int=LR_INTERACT)
             
             print(f"Probe Pure: BIC {bic_p:.2f} | Probe Int: BIC {bic_i:.2f} (Current Best: {self.best_bic:.2f})")
             
@@ -69,23 +72,23 @@ class StepwiseSearchAgent(nn.Module):
                 winner = min(candidates, key=lambda x: x[1])
                 w_type, w_bic, w_p_set, w_i_set = winner
                 
-                print(f"   >>> ACCEPT: Adding {w_type.upper()} {order} (BIC Drop: {self.best_bic - w_bic:.2f})")
+                print(f">>> ACCEPT: Adding {w_type.upper()} {order} (BIC Drop: {self.best_bic - w_bic:.2f})")
                 self.active_pure = w_p_set
                 self.active_interact = w_i_set
                 self.best_bic = w_bic
                 
                 # Commit: Retrain permanently to update weights for next steps
-                self._commit_training(train_loader)
+                self._commit_training(train_loader,lr_pure=0.002, lr_int=0.01)
                 
                 # --- Backward Pruning (Redundancy Check) ---
-                self._backward_pruning(train_loader, val_loader, current_order=order)
+                self._backward_pruning(train_loader, val_loader, current_order=order,lr_pure=LR_PURE, lr_int=LR_INTERACT)
                 
             else:
-                print(f"   >>> REJECT: No improvement in BIC. Order {order} is noise/redundant.")
+                print(f">>> REJECT: No improvement in BIC. Order {order} is noise/redundant.")
 
         return self.active_pure, self.active_interact
 
-    def _evaluate_configuration(self, p_set, i_set, train_loader, val_loader, epochs=15):
+    def _evaluate_configuration(self, p_set, i_set, train_loader, val_loader, epochs=15,lr_pure = 0.005,lr_int = 0.02):
         """
         Temporarily trains a specific subset config and returns metrics.
         Crucial: Uses weight snapshots to avoid polluting the main model during probing.
@@ -95,9 +98,14 @@ class StepwiseSearchAgent(nn.Module):
         # Set masks & Initialize new terms (Warm Start for others)
         self._update_masks(p_set, i_set)
         self._init_new_terms(p_set, i_set)
+        params = [
+            {'params': self.core.coeffs_pure, 'lr': lr_pure},
+            {'params': self.core.coeffs_interact, 'lr': lr_int},
+            {'params': self.core.factors, 'lr': lr_int}
+        ]
         
         # Train (Probing with higher LR)
-        optimizer = optim.Adam(self.parameters(), lr=0.005) 
+        optimizer = optim.Adam(params)
         self.train()
         for _ in range(epochs):
             for X, y in train_loader:
@@ -129,7 +137,7 @@ class StepwiseSearchAgent(nn.Module):
         
         return mse, bic
 
-    def _backward_pruning(self, train_loader, val_loader, current_order):
+    def _backward_pruning(self, train_loader, val_loader, current_order, lr_pure, lr_int):
         """Checks if any EXISTING term has become redundant after adding a new one."""
         print("   [Backward Check] Checking redundancy...")
         improved = True
@@ -141,13 +149,13 @@ class StepwiseSearchAgent(nn.Module):
                 if p == current_order: continue # Don't prune just added term
                 
                 test_p = self.active_pure - {p}
-                _, bic = self._evaluate_configuration(test_p, self.active_interact, train_loader, val_loader, epochs=10)
+                _, bic = self._evaluate_configuration(test_p, self.active_interact, train_loader, val_loader, epochs=10,lr_pure=lr_pure,lr_int=lr_int)
                 
                 if bic < self.best_bic:
                     print(f"      >>> PRUNE: Pure Order {p} is redundant (BIC -> {bic:.2f})")
                     self.active_pure = test_p
                     self.best_bic = bic
-                    self._commit_training(train_loader)
+                    self._commit_training(train_loader,lr_pure=0.002, lr_int=0.01)
                     improved = True
                     break 
 
@@ -158,20 +166,27 @@ class StepwiseSearchAgent(nn.Module):
                 if i == current_order: continue
                 
                 test_i = self.active_interact - {i}
-                _, bic = self._evaluate_configuration(self.active_pure, test_i, train_loader, val_loader, epochs=10)
+                _, bic = self._evaluate_configuration(self.active_pure, test_i, train_loader, val_loader, epochs=10,lr_pure=lr_pure, lr_int=lr_int)
                 
                 if bic < self.best_bic:
                     print(f"      >>> PRUNE: Interact Order {i} is redundant (BIC -> {bic:.2f})")
                     self.active_interact = test_i
                     self.best_bic = bic
-                    self._commit_training(train_loader)
+                    self._commit_training(train_loader,lr_pure=0.002, lr_int=0.01)
                     improved = True
                     break
 
-    def _commit_training(self, train_loader, epochs=20):
+    def _commit_training(self, train_loader, epochs=20, lr_pure = 0.005, lr_int = 0.02):
         """Updates weights permanently after a decision."""
         self._update_masks(self.active_pure, self.active_interact)
-        optimizer = optim.Adam(self.parameters(), lr=0.002)
+
+        params = [
+            {'params': self.core.coeffs_pure, 'lr': lr_pure},
+            {'params': self.core.coeffs_interact, 'lr': lr_int},
+            {'params': self.core.factors, 'lr': lr_int}
+        ]
+
+        optimizer = optim.Adam(params)
         self.train()
         for _ in range(epochs):
             for X, y in train_loader:
@@ -218,11 +233,11 @@ class StepwiseSearchAgent(nn.Module):
                 nn.init.xavier_normal_(self.core.coeffs_pure[p-1], gain=1.0)
         for i in i_set:
             if i not in self.active_interact:
-                nn.init.xavier_normal_(self.core.coeffs_interact[i-1], gain=1.0)
+                nn.init.xavier_normal_(self.core.coeffs_interact[i-1], gain=2.0)
 
                 # initialize factor tensor U and V
                 for f in self.core.factors[i-1]:
-                    nn.init.xavier_normal_(f, gain=1.0)
+                    nn.init.xavier_normal_(f, gain=2.0)
 
 
     def _mask_gradients(self):
