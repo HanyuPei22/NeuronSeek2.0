@@ -1,3 +1,4 @@
+from sched import scheduler
 import sys
 import os
 import torch
@@ -16,7 +17,7 @@ def run_benchmark():
     print(f"{'='*60}\n")
     
     # Configuration
-    LAMBDA_L0 = 0.1       # Sparsity penalty strength
+    LAMBDA_L0 = 0.01       # Sparsity penalty strength
     EPOCHS = 200          # Total training epochs
     WARMUP_EPOCHS = 50    # Epochs before enabling L0 penalty
     LR = 0.01             # Learning rate
@@ -39,6 +40,7 @@ def run_benchmark():
             if torch.cuda.is_available(): agent.cuda()
             
             optimizer = optim.Adam(agent.parameters(), lr=LR)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=EPOCHS)
             
             # Training Loop
             agent.train()
@@ -60,6 +62,7 @@ def run_benchmark():
                     
                     loss.backward()
                     optimizer.step()
+                    scheduler.step()
             
             # Evaluation
             found_p, found_i = agent.get_structure()
