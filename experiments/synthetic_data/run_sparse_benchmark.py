@@ -18,8 +18,8 @@ def run_benchmark():
     
     # Configuration
     LAMBDA_L0 = 1       # Sparsity penalty strength
-    EPOCHS = 80          # Total training epochs
-    WARMUP_EPOCHS = 20    # Epochs before enabling L0 penalty
+    EPOCHS = 150          # Total training epochs
+    WARMUP_EPOCHS = 70    # Epochs before enabling L0 penalty
     LR = 0.01             # Learning rate
     
     modes = ['pure', 'interact', 'hybrid']
