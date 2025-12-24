@@ -104,18 +104,19 @@ class SparseSearchAgent(nn.Module):
                     int_active.append(i + 1)
         return pure_active, int_active
     
-    def inspect_gates(self):
-            print(f"\n>>> Gate Status Inspection (Threshold=0.5) <<<")
-            
-            def format_stream(name, gates):
-                info = []
-                for i, gate in enumerate(gates):
-                    prob = gate.regularization_term().item()
-                    status = "[ON]" if prob > 0.5 else " .  "
-                    p_str = f"{prob:.4f}"
-                    info.append(f"Ord{i+1}:{status} {p_str}")
-                return f"{name}:\n  " + " | ".join(info)
+    def _format_stream(self, name, gates, coeffs):
+            info = []
+            for i, (gate, coeff) in enumerate(zip(gates, coeffs)):
+                prob = gate.regularization_term().item()
+                # Get the magnitude (absolute mean value) of the linear weight
+                weight = coeff.detach().abs().mean().item()
+                
+                status = "[ON]" if prob > 0.5 else " .  "
+                info.append(f"Ord{i+1}:{status} P={prob:.4f} W={weight:.4f}")
+            return f"{name}:\n  " + " | ".join(info)
 
-            print(format_stream("Pure Stream", self.gates_pure))
-            print(format_stream("Int  Stream", self.gates_int))
-            print(f"{'-'*60}")
+    def inspect_gates(self):
+        print("\n>>> Gate & Weight Inspection (Threshold=0.5) <<<")
+        print(self._format_stream("Pure Stream", self.gates_pure, self.core.coeffs_pure))
+        print(self._format_stream("Int  Stream", self.gates_int, self.core.coeffs_interact))
+        print("-" * 60)
