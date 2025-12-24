@@ -17,9 +17,9 @@ def run_benchmark():
     print(f"{'='*60}\n")
     
     # Configuration
-    LAMBDA_L0 = 0.01       # Sparsity penalty strength
-    EPOCHS = 200          # Total training epochs
-    WARMUP_EPOCHS = 50    # Epochs before enabling L0 penalty
+    LAMBDA_L0 = 1       # Sparsity penalty strength
+    EPOCHS = 80          # Total training epochs
+    WARMUP_EPOCHS = 20    # Epochs before enabling L0 penalty
     LR = 0.01             # Learning rate
     
     modes = ['pure', 'interact', 'hybrid']
@@ -62,8 +62,9 @@ def run_benchmark():
                     
                     loss.backward()
                     optimizer.step()
-                    scheduler.step()
+                scheduler.step()
             
+            agent.inspect_gates()
             # Evaluation
             found_p, found_i = agent.get_structure()
             truth_p = sorted(truth['pure'])
