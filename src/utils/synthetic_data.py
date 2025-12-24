@@ -55,19 +55,6 @@ class SyntheticGenerator:
         for w in ws:
             full_term = full_term * (X @ w)
             
-        # 3. [CRITICAL] Remove Diagonal (Pure) contributions for Order 2
-        # (w1^T x) * (w2^T x) contains term sum(w1_i * w2_i * x_i^2)
-        # We subtract this to leave ONLY cross-terms x_i * x_j (i != j)
-        if order == 2:
-            w1, w2 = ws[0], ws[1]
-            # Calculate the "Pure" part that is implicitly inside
-            # pure_part = sum((w1 * w2) * x^2)
-            diag_weight = w1 * w2 # Element-wise product of weights [D, 1]
-            pure_leakage = (X**2) @ diag_weight
-            
-            # Return strictly interaction part
-            return full_term - pure_leakage
-            
         return full_term
 
     # --- Formulas (Same structure, calling the improved helper) ---
