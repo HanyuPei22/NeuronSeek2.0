@@ -103,3 +103,19 @@ class SparseSearchAgent(nn.Module):
                 if gate.regularization_term() > threshold:
                     int_active.append(i + 1)
         return pure_active, int_active
+    
+    def inspect_gates(self):
+            print(f"\n>>> Gate Status Inspection (Threshold=0.5) <<<")
+            
+            def format_stream(name, gates):
+                info = []
+                for i, gate in enumerate(gates):
+                    prob = gate.regularization_term().item()
+                    status = "[ON]" if prob > 0.5 else " .  "
+                    p_str = f"{prob:.4f}"
+                    info.append(f"Ord{i+1}:{status} {p_str}")
+                return f"{name}:\n  " + " | ".join(info)
+
+            print(format_stream("Pure Stream", self.gates_pure))
+            print(format_stream("Int  Stream", self.gates_int))
+            print(f"{'-'*60}")
