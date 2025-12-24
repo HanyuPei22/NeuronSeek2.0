@@ -41,6 +41,9 @@ class SparseSearchAgent(nn.Module):
         
         self.gates_pure = nn.ModuleList([L0Gate() for _ in range(max_order)])
         self.gates_int  = nn.ModuleList([L0Gate() for _ in range(max_order)])
+
+        self.bn_pure = nn.ModuleList(nn.BatchNorm1d(num_classes, affine= False) for _ in range(max_order))
+        self.bn_int = nn.ModuleList(nn.BatchNorm1d(num_classes, affine= False) for _ in range(max_order))
         
         self._init_weights()
 
@@ -61,7 +64,8 @@ class SparseSearchAgent(nn.Module):
         for i, gate in enumerate(self.gates_pure):
             order = i + 1
             term = (x ** order) @ self.core.coeffs_pure[i]
-            output = output + gate(term, training=training)
+            term_norm = self.bn_pure[i](term)
+            output = output + gate(term_norm, training=training)
 
         # Interaction Stream
         for i, gate in enumerate(self.gates_int):
@@ -70,7 +74,8 @@ class SparseSearchAgent(nn.Module):
                 comp_prod = comp_prod * (x @ factor)
             
             term = comp_prod @ self.core.coeffs_interact[i]
-            output = output + gate(term, training=training)
+            term_norm = self.bn_int[i](term)
+            output = output + gate(term_norm, training=training)
             
         return output
 
