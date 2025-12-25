@@ -86,7 +86,9 @@ class SparseSearchAgent(nn.Module):
         for gate in self.gates_pure:
             reg_loss += gate.regularization_term() * cost_p
             
-        cost_i = np.sqrt(2 * self.input_dim * self.rank + self.rank)
+        #cost_i = np.sqrt(2 * self.input_dim * self.rank + self.rank)
+        #Here we change it to the same regularization as power term
+        cost_i = np.sqrt(self.input_dim)
         for gate in self.gates_int:
             reg_loss += gate.regularization_term() * cost_i
             
