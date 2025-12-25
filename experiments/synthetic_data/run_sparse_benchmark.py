@@ -8,6 +8,7 @@ from tabulate import tabulate
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.append(project_root)
 
+from src import core
 from src.models.sparse_search_agent import SparseSearchAgent
 from src.utils.synthetic_data import SyntheticGenerator
 
@@ -17,10 +18,10 @@ def run_benchmark():
     print(f"{'='*60}\n")
     
     # Configuration
-    LAMBDA_L0 = 1       # Sparsity penalty strength
-    EPOCHS = 150          # Total training epochs
-    WARMUP_EPOCHS = 70    # Epochs before enabling L0 penalty
-    LR = 0.01             # Learning rate
+    LAMBDA_L0 = 0.1       
+    EPOCHS = 150          
+    WARMUP_EPOCHS = 70    
+    LR = 0.02             
     
     modes = ['pure', 'interact', 'hybrid']
     variants = 5
@@ -39,12 +40,34 @@ def run_benchmark():
             agent = SparseSearchAgent(input_dim=10)
             if torch.cuda.is_available(): agent.cuda()
             
-            optimizer = optim.Adam(agent.parameters(), lr=LR)
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=EPOCHS)
+            # [Optimization Refinement]
+            # Use list comprehension for cleaner parameter grouping
+            gate_params = [p for n, p in agent.named_parameters() if 'gates' in n]
+            core_params = [p for n, p in agent.named_parameters() if 'gates' not in n]
+            
+            # Initialize optimizer with groups
+            optimizer = optim.Adam([
+                {'params': core_params, 'lr': LR},
+                {'params': gate_params, 'lr': LR} 
+            ], lr=LR)
+            
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+            
+            # [Logic Refinement] Freeze gates initially using requires_grad
+            # This is more efficient than manually zeroing grads inside the loop
+            for param in gate_params:
+                param.requires_grad = False
             
             # Training Loop
             agent.train()
             for epoch in range(EPOCHS):
+                
+                # [State Switch] Unfreeze gates exactly when warmup ends
+                if epoch == WARMUP_EPOCHS:
+                    print(f"[{case_id}] Warmup finished at Epoch {epoch}. Unfreezing Gates.")
+                    for param in gate_params:
+                        param.requires_grad = True
+
                 for X, y in train_loader:
                     if torch.cuda.is_available(): X, y = X.cuda(), y.cuda()
                     optimizer.zero_grad()
@@ -53,7 +76,7 @@ def run_benchmark():
                     preds = agent(X, training=True)
                     mse_loss = torch.nn.functional.mse_loss(preds, y)
                     
-                    # Warm-up Logic: Only apply regularization after warmup period
+                    # Loss Calculation
                     if epoch < WARMUP_EPOCHS:
                         loss = mse_loss
                     else:
@@ -62,10 +85,11 @@ def run_benchmark():
                     
                     loss.backward()
                     optimizer.step()
+                
                 scheduler.step()
             
+            # Inspection and Evaluation
             agent.inspect_gates()
-            # Evaluation
             found_p, found_i = agent.get_structure()
             truth_p = sorted(truth['pure'])
             truth_i = sorted(truth['interact'])
@@ -80,12 +104,14 @@ def run_benchmark():
             print(f"[{case_id}] {status} | GT: P{truth_p} I{truth_i} | Found: P{found_p} I{found_i}")
             results.append([case_id, status, str(truth_p), str(found_p), str(truth_i), str(found_i)])
 
-    # Summary Table
+    # Summary
     print(f"\n{'='*80}")
     print(tabulate(results, headers=['Case', 'Status', 'GT(P)', 'Found(P)', 'GT(I)', 'Found(I)'], tablefmt='grid'))
     
     perfect_count = sum(1 for r in results if r[1] == "PERFECT")
     print(f"\nPERFECT: {perfect_count}/{len(results)}")
 
+if __name__ == "__main__":
+    run_benchmark()
 if __name__ == "__main__":
     run_benchmark()
