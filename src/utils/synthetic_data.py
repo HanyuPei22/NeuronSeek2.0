@@ -39,10 +39,7 @@ class SyntheticGenerator:
 
     def _generate_global_interaction(self, X, order):
         """
-        Generates strict OFF-DIAGONAL global interactions.
-        For order=2: (Xw1)(Xw2) - Diag(Xw1, Xw2)
-        For higher orders, we approximate by just returning the product (complex to de-diagonalize),
-        but for Order=2 verification, this is crucial.
+        Generates global interactions.
         """
         # 1. Generate random projection weights
         ws = []
