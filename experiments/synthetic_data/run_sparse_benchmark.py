@@ -18,7 +18,7 @@ def run_benchmark():
     print(f"{'='*60}\n")
     
     # Configuration
-    LAMBDA_L0 = 0.1       
+    LAMBDA_L0 = 0.5
     EPOCHS = 150          
     WARMUP_EPOCHS = 70    
     LR = 0.02             
