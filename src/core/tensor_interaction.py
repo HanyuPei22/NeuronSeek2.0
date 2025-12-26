@@ -19,36 +19,50 @@ class TensorInteractionLayer(nn.Module):
         self.rank = rank
         self.num_classes = num_classes
         
-        # --- Stream 1: Interaction Terms (Implicit CP) ---
+        #Stream 1: Interaction Terms (Implicit CP) ---
         # Shared Factor Matrices U: Input_Dim -> Rank
         self.factors = nn.ModuleList()
         for i in range(1, poly_order + 1):
             order_factors = nn.ParameterList([
-                nn.Parameter(torch.randn(input_dim, rank) * 0.02) 
-                for _ in range(i)
-            ])
+                nn.Parameter(torch.empty(input_dim, rank)) 
+                for _ in range(i)])
             self.factors.append(order_factors)
-            
+
         # Interaction Coefficients K: Rank -> Num_Classes
         self.coeffs_interact = nn.ParameterList([
-            nn.Parameter(torch.randn(rank, num_classes) * 0.01) 
+            nn.Parameter(torch.empty(rank, num_classes)) 
             for _ in range(poly_order)
         ])
         
-        # --- Stream 2: Pure Power Terms (Explicit) ---
+        # Stream 2: Pure Power Terms (Explicit) ---
         # Pure Coefficients W: Input_Dim -> Num_Classes
-        # Models channel-wise polynomial activation: y = c * x^n
         self.coeffs_pure = nn.ParameterList([
-            nn.Parameter(torch.randn(input_dim, num_classes) * 0.01)
+            nn.Parameter(torch.empty(input_dim, num_classes))
             for _ in range(poly_order)
         ])
-        
-        # Bias (Shared)
-        self.beta = nn.Parameter(torch.zeros(num_classes))
+
+        self.beta = nn.Parameter(torch.empty(num_classes))
         
         # Masks for pruning (1.0 = Active, 0.0 = Pruned)
         self.register_buffer('mask_interact', torch.ones(poly_order))
         self.register_buffer('mask_pure', torch.ones(poly_order))
+
+    def reset_parameters(self):
+            """
+            Initialize parameters using standard methods (Xavier/Glorot).
+            This helps prevent vanishing gradients in high-order terms.
+            """
+            for order_factors in self.factors:
+                for factor in order_factors:
+                    nn.init.xavier_uniform_(factor)
+
+            for coeff in self.coeffs_interact:
+                nn.init.xavier_uniform_(coeff)
+
+            for coeff in self.coeffs_pure:
+                nn.init.xavier_uniform_(coeff)
+                
+            nn.init.zeros_(self.beta)
 
     def _compute_cp_features(self, x: torch.Tensor, order_idx: int) -> torch.Tensor:
         """
@@ -56,7 +70,7 @@ class TensorInteractionLayer(nn.Module):
         Output: [Batch, Rank]
         """
         order_factors = self.factors[order_idx]
-        # Projection: [Batch, D] @ [D, R] -> [Batch, R]
+        # [Batch, D] @ [D, R] -> [Batch, R]
         projections = [x @ u for u in order_factors]
         # Interaction: Element-wise product across the order dimension
         combined = torch.stack(projections, dim=0).prod(dim=0)
