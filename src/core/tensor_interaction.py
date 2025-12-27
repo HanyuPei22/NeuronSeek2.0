@@ -61,7 +61,7 @@ class TensorInteractionLayer(nn.Module):
 
             for coeff in self.coeffs_pure:
                 nn.init.xavier_uniform_(coeff)
-                
+
             nn.init.zeros_(self.beta)
 
     def _compute_cp_features(self, x: torch.Tensor, order_idx: int) -> torch.Tensor:
@@ -72,7 +72,7 @@ class TensorInteractionLayer(nn.Module):
         order_factors = self.factors[order_idx]
         # [Batch, D] @ [D, R] -> [Batch, R]
         projections = [x @ u for u in order_factors]
-        # Interaction: Element-wise product across the order dimension
+        # K*[Batch,R] -> [K,Batch,R]
         combined = torch.stack(projections, dim=0).prod(dim=0)
         return combined
 
