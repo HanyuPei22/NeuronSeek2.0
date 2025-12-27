@@ -47,8 +47,8 @@ def run_benchmark():
             
             # Initialize optimizer with groups
             optimizer = optim.Adam([
-                {'params': core_params, 'lr': LR},
-                {'params': gate_params, 'lr': LR} 
+                {'params': core_params, 'lr': 0.01},
+                {'params': gate_params, 'lr': 0.05} 
             ], lr=LR)
             
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
@@ -111,7 +111,5 @@ def run_benchmark():
     perfect_count = sum(1 for r in results if r[1] == "PERFECT")
     print(f"\nPERFECT: {perfect_count}/{len(results)}")
 
-if __name__ == "__main__":
-    run_benchmark()
 if __name__ == "__main__":
     run_benchmark()
