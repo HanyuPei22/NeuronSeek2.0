@@ -1,142 +1,117 @@
-# NeuronSeek-TD 2.0: Methodological Framework
+# Mathematical Derivation & Workflow: Tensor Interaction Layer
 
-## 1. Overview
+## Part 1: Equivalence Proof of Implicit CP Decomposition
 
-NeuronSeek-TD 2.0 is a framework designed to discover the optimal mathematical structure (aggregation function) for artificial neurons in a data-driven manner. Unlike traditional Neural Architecture Search (NAS) that searches for network topology, NeuronSeek focuses on the **microscopic level**: determining whether a neuron should perform a linear combination ($\sum w_i x_i$) or a high-order polynomial interaction (e.g., $\sum w_{ij} x_i x_j$).
+**Theorem:**
+Calculating the interaction term via **Implicit CP Decomposition** (product of projections) is mathematically equivalent to contracting input vector $x$ with a **reconstructed high-order weight tensor** $\mathcal{W}$ derived from standard CP decomposition.
 
-The framework operates in two distinct stages:
+### 1. Definitions
+* **Input:** $x \in \mathbb{R}^D$.
+* **Target Interaction:** A $K$-th order polynomial term $y \in \mathbb{R}$.
+* **Weight Tensor:** $\mathcal{W} \in \mathbb{R}^{D \times D \times \dots \times D}$ ($K$ times).
+* **CP Rank:** $R$.
+* **Factor Matrices:** $\{U^{(1)}, \dots, U^{(K)}\}$, where each $U^{(k)} \in \mathbb{R}^{D \times R}$. Let $\mathbf{u}^{(k)}_r$ denote the $r$-th column of matrix $U^{(k)}$.
 
-1.  **Stage 1 (Neuronal Formula Discovery):** Uses a shallow, interpretable proxy model based on Tensor Decomposition to identify significant polynomial terms from data.
-2.  **Stage 2 (Network Construction):** Constructs a deep neural network (e.g., ResNet) using the discovered aggregation functions to replace standard linear/convolutional layers.
-
-
-
-## 2. Stage 1: Neuronal Formula Discovery
-
-In this stage, we aim to approximate the optimal target mapping $F(\mathbf{x})$ using a high-order polynomial expansion. To avoid the combinatorial explosion of parameters in high-order tensors, we employ **CP Decomposition (Canonical Polyadic Decomposition)** with **Implicit Contraction**.
-
-### 2.1 The Mathematical Core: Implicit Tensor Contraction
-
-For a polynomial of order $N$, instead of maintaining a dense weight tensor $\mathcal{W} \in \mathbb{R}^{D \times \dots \times D}$, we decompose it into $N$ factor matrices $\mathbf{U}^{(1)}, \dots, \mathbf{U}^{(N)}$, where each $\mathbf{U} \in \mathbb{R}^{D \times R}$. Here, $D$ is the input dimension and $R$ is the Rank.
-
-#### 2.1.1 The "Curse of Dimensionality" in Full Tensors
-Consider an input vector $\mathbf{x} \in \mathbb{R}^D$. A full $N$-th order polynomial interaction term is defined as the contraction between the input $\mathbf{x}$ and a weight tensor $\mathcal{W}^{[N]}$:
+### 2. Standard Static Form (Tensor Reconstruction)
+In standard CP decomposition, the weight tensor $\mathcal{W}$ is approximated as the sum of $R$ rank-1 tensors (outer products):
 
 $$
-y = \mathcal{W}^{[N]} \times_1 \mathbf{x} \times_2 \mathbf{x} \dots \times_N \mathbf{x} = \sum_{i_1=1}^{D} \dots \sum_{i_N=1}^{D} \mathcal{W}_{i_1, \dots, i_N} \cdot x_{i_1} \dots x_{i_N}
+\mathcal{W} \approx \sum_{r=1}^{R} \mathbf{u}^{(1)}_r \circ \mathbf{u}^{(2)}_r \circ \dots \circ \mathbf{u}^{(K)}_r
 $$
 
-The number of parameters scales as $O(D^N)$. For $D=512, N=3$, this requires $\approx 1.34 \times 10^8$ parameters, which is computationally intractable.
-
-#### 2.1.2 CP Decomposition and Implicit Calculation
-We approximate the weight tensor as a sum of $R$ rank-one tensors:
-$$
-\mathcal{W}^{[N]} \approx \sum_{r=1}^{R} \mathbf{u}_1^{(r)} \circ \mathbf{u}_2^{(r)} \circ \dots \circ \mathbf{u}_N^{(r)}
-$$
-
-By substituting this into the polynomial equation and utilizing the **distributive property** of tensor contraction, we derive the implicit calculation form:
+### 3. Functional Form (Tensor Contraction)
+The output $y$ is the result of contracting the tensor $\mathcal{W}$ with the input vector $x$ along all $K$ modes:
 
 $$
-y \approx \sum_{r=1}^{R} \underbrace{\left( (\mathbf{u}_1^{(r)} \circ \dots \circ \mathbf{u}_N^{(r)}) \times_1 \mathbf{x} \dots \times_N \mathbf{x} \right)}_{\text{Term}_r}
+y = \mathcal{W} \times_1 x \times_2 x \dots \times_K x
 $$
 
-$$
-\text{Term}_r = (\mathbf{x}^\top \mathbf{u}_1^{(r)}) \cdot (\mathbf{x}^\top \mathbf{u}_2^{(r)}) \cdots (\mathbf{x}^\top \mathbf{u}_N^{(r)})
-$$
-
-This derivation proves that the high-order interaction can be computed by **projecting** the input onto factor vectors and then **multiplying** the scalar results.
-
-### 2.2 Algorithm Implementation: Projection & Interaction
-
-Based on the derivation above, we formulate the forward pass using matrix operations. This process consists of two steps:
-
-1.  **Linear Projection (Dimensionality Reduction):**
-    We project the input $\mathbf{x} \in \mathbb{R}^{B \times D}$ onto the factor matrices $\mathbf{U}^{(n)} \in \mathbb{R}^{D \times R}$ for each order $n$.
-    $$
-    \mathbf{P}_n = \mathbf{x} \mathbf{U}^{(n)} \quad \in \mathbb{R}^{B \times R}
-    $$
-
-2.  **Interaction via Hadamard Product (Non-linearity):**
-    We compute the element-wise product of the projected features across all orders. This step generates the polynomial cross-terms implicitly within the latent rank space.
-    $$
-    \mathbf{H} = \mathbf{P}_1 \odot \mathbf{P}_2 \odot \dots \odot \mathbf{P}_n \quad \in \mathbb{R}^{B \times R}
-    $$
-    *Result:* The matrix $\mathbf{H}$ contains $R$ independent high-order feature channels.
-
----
-
-### 2.3 Task-Specific Workflows
-
-The handling of the extracted interaction features $\mathbf{H}$ differs fundamentally between classification and regression tasks to balance **Information Capacity** vs. **Parsimony**.
-
-#### Path A: Classification (e.g., CIFAR-100)
-* **Goal:** Discriminative Feature Extraction.
-* **Strategy:** **Bottleneck Representation**. We treat the Rank $R$ as the "width" of a hidden layer. We must preserve the rank dimension to maintain sufficient information bandwidth for separating classes.
-* **Hyperparameters:** High Rank ($R \approx 32 \sim 128$).
-
-**Data Flow:**
-1.  **Input:** $\mathbf{x} \in \mathbb{R}^{B \times D}$.
-2.  **Interaction:** Compute $\mathbf{H} \in \mathbb{R}^{B \times R}$ via Hadamard product. **Do not sum over $R$.**
-3.  **Mapping to Logits:** Use a learnable coefficient matrix $\mathbf{K} \in \mathbb{R}^{R \times C}$ (where $C$ is num\_classes).
-    $$
-    \mathbf{Y}_{logits} = \mathbf{H} \cdot \mathbf{K} + \mathbf{b}
-    $$
-    *(Dimensions: $[B, R] \times [R, C] \to [B, C]$)*
-4.  **Significance Metric:** The Frobenius norm of the matrix $\mathbf{K}$ ($\|\mathbf{K}\|_F$) determines the importance of this polynomial order.
-
-#### Path B: Regression (e.g., Equation Discovery)
-* **Goal:** Scalar Function Approximation / Physical Law Discovery.
-* **Strategy:** **Parsimony & Reduction**. We assume physical laws are sparse. We aggregate the rank information into a single scalar intensity.
-* **Hyperparameters:** Low Rank ($R \approx 3 \sim 5$).
-
-**Data Flow:**
-1.  **Input:** $\mathbf{x} \in \mathbb{R}^{B \times D}$.
-2.  **Interaction:** Compute $\mathbf{H} \in \mathbb{R}^{B \times R}$.
-3.  **Reduction (Summation):** Collapse the rank dimension to obtain scalar intensity.
-    $$
-    \mathbf{t} = \sum_{r=1}^{R} \mathbf{H}_{:, r}
-    $$
-    *(Dimensions: $[B, R] \to [B, 1]$)*
-4.  **Scalar Mapping:** Use a scalar coefficient $c \in \mathbb{R}$.
-    $$
-    \mathbf{y} = \mathbf{t} \cdot c + b
-    $$
-5.  **Significance Metric:** The absolute value of the scalar $|c|$.
-
----
-
-### 2.4 Automatic Term Selection (STRidge)
-
-To identify the optimal formula (e.g., deciding whether to keep $x^2$ or $x^3$), we employ **Sequential Threshold Ridge regression (STRidge)**.
-
-**Algorithm:**
-1.  **Train** the proxy model with $L_1$ regularization on coefficients ($\mathbf{K}$ or $c$).
-2.  **Evaluate** the Importance Score ($\text{Score}_n$) for each polynomial order $n$.
-3.  **Hard Pruning:** If $\text{Score}_n < \tau$ (dynamic threshold), set coefficients and their gradients to 0.
-4.  **Fine-tune** the remaining active terms to recover accuracy.
-
----
-
-## 3. Stage 2: Task-Driven Network Construction
-
-Once the optimal polynomial structure is discovered (e.g., "The task requires $x$ and $x^2$ terms"), we instantiate a deep neural network where standard neurons are replaced by **Task-Driven Neurons**.
-
-### 3.1 The Task-Driven Neuron Module
-
-If Stage 1 identifies that orders $\mathcal{S} = \{1, 2\}$ are significant, we replace standard layers (Linear or Conv2d) with a composite layer defined as:
+### 4. Derivation
+Substitute the CP approximation into the contraction equation:
 
 $$
-\mathbf{y} = \text{Norm}(\text{Layer}_1(\mathbf{x})) + \text{Norm}(\text{Layer}_2(\Phi(\mathbf{x})))
+\begin{aligned}
+y &= \left( \sum_{r=1}^{R} \mathbf{u}^{(1)}_r \circ \mathbf{u}^{(2)}_r \circ \dots \circ \mathbf{u}^{(K)}_r \right) \times_1 x \dots \times_K x \\
+\end{aligned}
 $$
 
-* **Explicit Calculation ($\Phi(\mathbf{x})$):**
-    * For **Regression-like simple features**: We use element-wise power $\mathbf{x}^2$.
-    * For **Classification-like complex features**: We use a low-rank bottleneck layer (instantiating the CP structure found in Stage 1) to capture cross-terms $x_i x_j$.
-* **Normalization:** High-order terms (e.g., $x^2, x^3$) can cause gradient instability. We explicitly apply **Batch Normalization (BN)** after each polynomial projection to unify feature scales.
+By the **distributive property** of tensor contraction over addition, and the property that contracting a rank-1 outer product results in the product of scalar dot products ($(u \circ v) \times_1 x \times_2 x = (u^Tx)(v^Tx)$):
 
-### 3.2 Integration with Backbones
+$$
+\begin{aligned}
+y &= \sum_{r=1}^{R} \left( (\mathbf{u}^{(1)}_r \cdot x) \times (\mathbf{u}^{(2)}_r \cdot x) \times \dots \times (\mathbf{u}^{(K)}_r \cdot x) \right) \\
+\end{aligned}
+$$
 
-* **ResNet:** Replace the $3 \times 3$ Conv in the residual block.
-    * *Original:* $y = \text{Conv}(\mathbf{x})$
-    * *Task-Driven:* $y = \text{Conv}_1(\mathbf{x}) + \text{Conv}_2(\mathbf{x}^2)$
-* **MLP-Mixer / ViT:** Replace the Feed-Forward Network (FFN) linear layers to introduce non-linear inductive bias.
+This can be rewritten in matrix notation. Let $P^{(k)} = x^T U^{(k)} \in \mathbb{R}^{1 \times R}$ be the projection of $x$ onto the $k$-th factor space. The term inside the summation corresponds to the element-wise product (Hadamard product) of these projections at index $r$:
+
+$$
+y = \sum_{r=1}^{R} \left( \prod_{k=1}^{K} P^{(k)}_r \right)
+$$
+
+**Conclusion:**
+This final equation matches exactly the code implementation: **Project** input to latent space $\rightarrow$ **Element-wise Product** across orders $\rightarrow$ **Sum** (via linear layer).
+
+***
+
+## Part 2: Mathematical Workflow (Order $K=5$)
+
+This section details the forward pass and training dynamics for a **5th-Order** interaction term.
+
+### 1. Hypothesis & Setup
+* **Objective:** Model a global 5th-order interaction $\mathcal{I}_5(x)$.
+* **Input Batch:** $X \in \mathbb{R}^{B \times D}$ ($B$: Batch size, $D$: Input dim).
+* **Hyperparameters:** Rank $R$, Order $K=5$, Output Classes $C_{out}$.
+* **Learnable Parameters:**
+    * **Factors:** 5 matrices $\{U^{(1)}, U^{(2)}, U^{(3)}, U^{(4)}, U^{(5)}\}$, each $U^{(k)} \in \mathbb{R}^{D \times R}$.
+    * **Coefficients:** $W_{int} \in \mathbb{R}^{R \times C_{out}}$.
+
+### 2. Forward Propagation
+
+#### Step A: Latent Projection (Dimension Reduction)
+For each order $k \in \{1, \dots, 5\}$, project the input $X$ into the shared rank space using the specific factor matrix $U^{(k)}$.
+
+$$
+P^{(k)} = X U^{(k)}
+$$
+* **Dim Change:** $[B, D] \times [D, R] \rightarrow [B, R]$
+* *Result:* We obtain a list of 5 matrices: $[P^{(1)}, P^{(2)}, P^{(3)}, P^{(4)}, P^{(5)}]$.
+
+#### Step B: Interaction (Hadamard Product)
+Compute the non-linear interaction by taking the element-wise product of all projected features along the order dimension.
+
+$$
+Z = P^{(1)} \odot P^{(2)} \odot P^{(3)} \odot P^{(4)} \odot P^{(5)}
+$$
+* **Operation:** $\odot$ denotes Element-wise Hadamard product.
+* **Dim Change:** Collapse 5 tensors of $[B, R] \rightarrow [B, R]$.
+* *Meaning:* $Z_{b,r}$ represents the strength of the $r$-th interaction pattern for sample $b$.
+
+#### Step C: Output Mapping (Linear Combination)
+Map the latent interaction features $Z$ to the final class logits.
+
+$$
+\hat{Y}_{int} = Z W_{int}
+$$
+* **Dim Change:** $[B, R] \times [R, C_{out}] \rightarrow [B, C_{out}]$.
+
+### 3. Training Process
+
+#### Loss Function
+The total objective function $\mathcal{L}$ combines prediction error and regularization.
+
+$$
+\mathcal{L} = \underbrace{\text{MSE}(\hat{Y}, Y_{GT})}_{\text{Fidelity}} + \lambda \underbrace{\mathcal{R}(Gates)}_{\text{Sparsity}} + \gamma \sum_{k=1}^5 \|U^{(k)}\|_F^2
+$$
+
+#### Backpropagation (Gradient Flow)
+Gradients flow backward from $\mathcal{L}$ through the chain rule.
+
+1.  **Update Coefficients ($W_{int}$):**
+    $$\frac{\partial \mathcal{L}}{\partial W_{int}} = Z^T (\hat{Y} - Y)$$
+    * *Update:* Simple linear regression update.
+
+2.  **Update Factors ($U^{(k)}$):**
+    The gradient for the $k$-th factor depends on the product of **all other factors** ($j \neq k$).
+    $$\frac{\partial \mathcal{L}}{\partial U^{(k)}} = X^T \left[ \left( (\hat{Y} - Y) W_{int}^T \right) \odot \left( \bigodot_{j \neq k} P^{(j)} \right) \right]$$
+    * *Insight:* For $U^{(k)}$ to learn, the other projections $P^{(j)}$ must be non-zero. This creates a coupled optimization landscape (non-convex), requiring good initialization (Xavier) and warm-up to establish a direction.
