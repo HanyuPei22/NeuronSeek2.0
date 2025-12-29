@@ -18,9 +18,9 @@ def run_benchmark():
     print(f"{'='*60}\n")
     
     # Configuration
-    LAMBDA_L0 = 0.5
-    EPOCHS = 150          
-    WARMUP_EPOCHS = 70    
+    LAMBDA_L0 = 0.6
+    EPOCHS = 100          
+    WARMUP_EPOCHS = 40    
     LR = 0.02             
     
     modes = ['pure', 'interact', 'hybrid']
@@ -39,9 +39,7 @@ def run_benchmark():
             # Agent Initialization
             agent = SparseSearchAgent(input_dim=10)
             if torch.cuda.is_available(): agent.cuda()
-            
-            # [Optimization Refinement]
-            # Use list comprehension for cleaner parameter grouping
+
             gate_params = [p for n, p in agent.named_parameters() if 'gates' in n]
             core_params = [p for n, p in agent.named_parameters() if 'gates' not in n]
             
@@ -53,12 +51,10 @@ def run_benchmark():
             
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
             
-            # [Logic Refinement] Freeze gates initially using requires_grad
-            # This is more efficient than manually zeroing grads inside the loop
+            # Freeze gates initially using requires_grad
             for param in gate_params:
                 param.requires_grad = False
-            
-            # Training Loop
+
             agent.train()
             for epoch in range(EPOCHS):
                 

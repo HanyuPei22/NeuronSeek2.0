@@ -50,18 +50,12 @@ class SparseSearchAgent(nn.Module):
     def __init__(self, input_dim=10, num_classes=1, rank=8, max_order=5):
         super().__init__()
         self.input_dim = input_dim
-        
-        # 1. Math Core (Parameters are initialized internally by the layer)
         self.core = DualStreamInteractionLayer(input_dim, num_classes, rank, max_order)
-        
-        # 2. Control Flow Components
+
         self.bias = nn.Parameter(torch.zeros(num_classes))
-        
-        # Gates for structure learning
         self.gates_pure = nn.ModuleList([L0Gate() for _ in range(max_order)])
         self.gates_int  = nn.ModuleList([L0Gate() for _ in range(max_order)])
-        
-        # BatchNorm for numerical stability before gating
+
         self.bn_pure = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
         self.bn_int = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
 
@@ -71,17 +65,15 @@ class SparseSearchAgent(nn.Module):
         
         # --- Stream 1: Pure Power Terms ---
         for i, gate in enumerate(self.gates_pure):
-            # Fetch atomic term from core
+
             term = self.core.get_pure_term(x, i)
-            # Apply Normalization -> Gate -> Accumulate
             term_norm = self.bn_pure[i](term)
             output = output + gate(term_norm, training=training)
 
         # --- Stream 2: Interaction Terms ---
         for i, gate in enumerate(self.gates_int):
-            # Fetch atomic term from core
+
             term = self.core.get_interaction_term(x, i)
-            # Apply Normalization -> Gate -> Accumulate
             term_norm = self.bn_int[i](term)
             output = output + gate(term_norm, training=training)
             
@@ -96,7 +88,6 @@ class SparseSearchAgent(nn.Module):
         int_active = []
         
         with torch.no_grad():
-            # Check Pure Stream Gates
             for i, gate in enumerate(self.gates_pure):
                 # regularization_term() returns the probability P
                 if gate.regularization_term() > threshold:
@@ -120,10 +111,10 @@ class SparseSearchAgent(nn.Module):
         cost_base = np.sqrt(self.input_dim)
         
         for gate in self.gates_pure:
-            reg_loss += gate.regularization_term() * cost_base
+            reg_loss += gate.regularization_term() #* cost_base
             
         for gate in self.gates_int:
-            reg_loss += gate.regularization_term() * cost_base
+            reg_loss += gate.regularization_term() #* cost_base
             
         return reg_loss
 
