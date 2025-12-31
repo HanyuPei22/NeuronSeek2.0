@@ -5,14 +5,13 @@ from copy import deepcopy
 from random import randint, random, shuffle
 from sympy import sympify, expand, Symbol
 import sympy
-from tqdm import tqdm
 from typing import Dict, List, Any
 
 from src.utils.seeds import setup_seed
 from .base import BaseStructureSearcher
 
 # ==============================================================================
-# PART 1: The Original VecSymRegressor Engine (Unmodified Logic)
+# The Original VecSymRegressor Engine (Your Provided Code)
 # ==============================================================================
 
 class VecSymRegressor:
@@ -59,23 +58,19 @@ class VecSymRegressor:
         return node["format_str"].format(*[self.render_prog(c) for c in node["children"]])
 
     def simp(self, tree):
-        # Uses sympy to simplify, then replaces * with @ for vector eval in 'evaluate'
         return str(expand(sympify(self.render_prog(tree)))).replace("*", "@").replace('@@', '**')
 
     def evaluate(self, expr, x_data):
-        # Original Vectorized Evaluation Logic with String Injection
         x = x_data
         temp = re.split(' ', expr)
         for n, i_exp in enumerate(temp):
             if '@' in i_exp:
                 index = i_exp.find('@')
                 tem = list(i_exp)
-                # Inject vectorized ones: 3 -> [3, 3, 3...]
                 tem[index - 1] = str((eval(''.join(i_exp[0:index])) * np.ones((1, x_data.shape[0]))).tolist())
                 del tem[0:index - 1]
                 temp[n] = ''.join(tem)
         ex = ''.join(temp)
-        # Note: 'x' variable is assumed to be in local scope for eval
         return expr, eval(ex)
 
     def rand_w(self):
@@ -107,7 +102,7 @@ class VecSymRegressor:
     def do_mutate(self, selected):
         offspring = deepcopy(selected)
         mutate_point = self.select_random_node(offspring, None, 0)
-        if mutate_point: # Check if None
+        if mutate_point:
             child_count = len(mutate_point.get("children", []))
             if child_count > 0:
                 mutate_point["children"][randint(0, child_count - 1)] = self.random_prog(0)
@@ -117,8 +112,6 @@ class VecSymRegressor:
         offspring = deepcopy(selected1)
         xover_point1 = self.select_random_node(offspring, None, 0)
         xover_point2 = self.select_random_node(selected2, None, 0)
-        
-        # Safety check for nodes with children
         if xover_point1 and xover_point2 and "children" in xover_point1:
             child_count = len(xover_point1["children"])
             if child_count > 0:
@@ -153,28 +146,22 @@ class VecSymRegressor:
             return float("inf")
         else:
             try:
-                # Transpose handling: pred is [1, N], label is [1, N] inside this class logic
                 mse = np.mean(np.square(pred - label))
                 return mse
             except:
                 return float("inf")
 
     def fit(self, X, y):
-        # Original logic expects [Features, Samples] -> Transpose input
         X = X.T
         y = y.T
-        
         self.population = [self.random_prog() for _ in range(self.pop_size)]
         self.box = {}
 
-        # Removed file logging for clean library usage
-        
         for gen in range(self.max_generations):
             fitness = []
             for prog in self.population:
                 try:
                     s_prog = self.simp(prog)
-                    # evaluate returns (expr_string, numpy_result)
                     func_str, prediction = self.evaluate(s_prog, X)
                     score = self.compute_fitness(func_str, prediction, y)
                 except Exception:
@@ -187,7 +174,6 @@ class VecSymRegressor:
                     self.global_best = score
                     self.best_prog = func_str
 
-                # Box logic (Pareto-ish storage)
                 if len(self.box) < self.pop_size * 0.05:
                     self.box[score] = prog
                 else:
@@ -199,26 +185,22 @@ class VecSymRegressor:
             lst = list(self.box.values())
             self.population += lst
             shuffle(self.population)
-            
-            # Offspring generation
             population_new = [self.get_offspring(self.population, fitness) for _ in range(self.pop_size)]
             self.population = population_new + lst
 
         self.neuron = self.best_prog
 
-
 # ==============================================================================
-# PART 2: The Wrapper (Adapter Pattern)
+# WRAPPER (TNSRSearcher)
 # ==============================================================================
 
-class SRSearcher(BaseStructureSearcher):
+class TNSRSearcher(BaseStructureSearcher):
     """
-    Wrapper for the original TN-SR VecSymRegressor.
-    Translates input data and parses output strings into 'global_power' terms.
+    Wrapper for your 'VecSymRegressor' (TN-SR).
+    Discovers GLOBAL transformations (x^2 + x), NOT index-specific features.
     """
     def __init__(self, input_dim: int, population_size=2000, generations=20):
         super().__init__(input_dim)
-        # Using the original engine
         self.engine = VecSymRegressor(
             pop_size=population_size, 
             max_generations=generations,
@@ -226,32 +208,18 @@ class SRSearcher(BaseStructureSearcher):
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """
-        X: [N_samples, Input_Dim]
-        y: [N_samples, 1]
-        """
-        # The engine internally does Transpose, so we pass as is or check docstring.
-        # Docstring says: "Args: X: Input data." -> Inside: "X = X.T"
-        # So we pass standard [N, D] numpy arrays.
+        # Engine expects numpy arrays
         self.engine.fit(X, y)
 
     def get_structure_info(self) -> dict:
-        """
-        Parses the found formula (e.g. 'x**2 + 2@x') into a structure config.
-        Target format: [{'type': 'global_power', 'p': 2}, ...]
-        """
         raw_formula = self.engine.neuron
         if not raw_formula:
-            print("[SR] Warning: No formula found.")
             return {'type': 'explicit_terms', 'terms': []}
             
-        # Clean the specific format from the engine:
-        # e.g., "x**2 + 0.5@x" -> "x**2 + 0.5*x"
         clean_formula = raw_formula.replace('@', '*')
-        print(f"[SR] Best Formula: {clean_formula}")
+        print(f"[TN-SR] Best Formula: {clean_formula}")
         
         parsed_terms = self._parse_global_formula(clean_formula)
-        
         return {
             'type': 'explicit_terms',
             'raw_formula': clean_formula,
@@ -259,45 +227,25 @@ class SRSearcher(BaseStructureSearcher):
         }
 
     def _parse_global_formula(self, formula_str: str) -> List[Dict]:
-        """
-        Parses a polynomial of a single variable 'x' (representing the whole tensor).
-        """
+        """Parses polynomial of global 'x'."""
         try:
             x = Symbol('x')
-            # 1. Expand: (x+1)**2 -> x**2 + 2*x + 1
             expr = expand(sympify(formula_str))
-        except Exception as e:
-            print(f"[SR] Parse Error: {e}")
+        except Exception:
             return []
 
         parsed_terms = []
+        args = expr.args if expr.func == sympy.core.add.Add else [expr]
         
-        # Handle single term vs sum
-        if expr.func == sympy.core.add.Add:
-            args = expr.args
-        else:
-            args = [expr]
-            
         for arg in args:
-            # Separate coeff and term: 2*x**2 -> coeff=2, term=x**2
             coeff, term = arg.as_coeff_Mul()
+            if term == sympy.S.One: continue # Bias
             
-            # Constant check
-            if term == sympy.S.One:
-                # This is a bias term (e.g. + 5)
-                # We can ignore it as the Layer has a bias parameter, 
-                # or add a 'constant' type. Let's ignore for structure.
-                continue
-                
-            # Get degree of x
             degree = sympy.degree(term, gen=x)
-            
-            # We only care about the power. The coefficient will be retrained.
             if degree > 0:
                 parsed_terms.append({
                     'type': 'global_power', 
                     'p': int(degree),
                     'raw': str(term)
                 })
-                
         return parsed_terms

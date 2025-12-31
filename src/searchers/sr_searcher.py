@@ -1,14 +1,17 @@
 import numpy as np
+import re
 from gplearn.genetic import SymbolicRegressor
 from .base import BaseStructureSearcher
 
 class SRSearcher(BaseStructureSearcher):
-    """Wrapper for Genetic Programming (gplearn)."""
+    """
+    Wrapper for Standard Genetic Programming (gplearn).
+    Discovers sparse, index-based features (x0 * x1).
+    """
 
     def __init__(self, input_dim: int, population_size: int = 2000, generations: int = 20):
         super().__init__(input_dim)
-        # Exclude sin/cos to maintain fair comparison with polynomial methods
-        # Function set can be expanded if comparing with EQL
+        # Standard function set for polynomial discovery
         self.est = SymbolicRegressor(
             population_size=population_size,
             generations=generations,
@@ -20,13 +23,51 @@ class SRSearcher(BaseStructureSearcher):
         self.best_program = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # gplearn expects 1D target array
         y_flat = y.ravel() if y.ndim > 1 else y
         self.est.fit(X, y_flat)
         self.best_program = self.est._program
 
-    def get_structure_info(self) -> str:
-        """Returns the Lisp-style S-expression string (e.g., 'add(mul(X0, X1), X2)')."""
+    def get_structure_info(self) -> dict:
         if self.best_program is None:
-            raise RuntimeError("Model not fitted yet.")
-        return str(self.best_program)
+            return {'type': 'explicit_terms', 'terms': []}
+        
+        raw_str = str(self.best_program)
+        print(f"[Standard SR] Found: {raw_str}")
+        
+        # Parse gplearn string to our terms format
+        # gplearn outputs: sub(add(X0, X1), mul(X2, X2))
+        terms = self._parse_gplearn_formula(raw_str)
+        
+        return {
+            'type': 'explicit_terms',
+            'raw_formula': raw_str,
+            'terms': terms
+        }
+
+    def _parse_gplearn_formula(self, raw_str):
+        """
+        Parses gplearn string into terms.
+        Since converting arbitrary trees to sum-of-products is hard, 
+        we classify the WHOLE formula as a single 'complex' term 
+        that operates on the specific indices involved.
+        """
+        # Extract all used indices (e.g. X0, X10)
+        indices = [int(x) for x in re.findall(r'X(\d+)', raw_str)]
+        indices = sorted(list(set(indices)))
+        
+        if not indices: return [] # Constant
+        
+        # In Stage 2, we will treat this as a "Blackbox Feature"
+        # that takes [x0, x1...] and computes the gplearn formula.
+        # But for comparison, we mainly care IF it found the right indices.
+        
+        # Simple Heuristic Classification for Metrics:
+        term_type = 'linear'
+        if 'mul' in raw_str: term_type = 'interact'
+        
+        return [{
+            'type': 'gplearn_tree', # Special type for Stage 2 to handle via eval/tree execution
+            'indices': indices,
+            'raw': raw_str,
+            'gplearn_obj': self.best_program # Pass object for execution if possible
+        }]
