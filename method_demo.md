@@ -1,117 +1,34 @@
 # Mathematical Derivation & Workflow: Tensor Interaction Layer
 
-## Part 1: Equivalence Proof of Implicit CP Decomposition
+## Method Formulation
 
-**Theorem:**
-Calculating the interaction term via **Implicit CP Decomposition** (product of projections) is mathematically equivalent to contracting input vector $x$ with a **reconstructed high-order weight tensor** $\mathcal{W}$ derived from standard CP decomposition.
+### Global Optimization Objective
 
-### 1. Definitions
-* **Input:** $x \in \mathbb{R}^D$.
-* **Target Interaction:** A $K$-th order polynomial term $y \in \mathbb{R}$.
-* **Weight Tensor:** $\mathcal{W} \in \mathbb{R}^{D \times D \times \dots \times D}$ ($K$ times).
-* **CP Rank:** $R$.
-* **Factor Matrices:** $\{U^{(1)}, \dots, U^{(K)}\}$, where each $U^{(k)} \in \mathbb{R}^{D \times R}$. Let $\mathbf{u}^{(k)}_r$ denote the $r$-th column of matrix $U^{(k)}$.
+We formulate the structure discovery as a constrained optimization problem. The goal is to minimize the task-specific loss while imposing sparsity on the polynomial orders via a differentiable $L_0$ regularization term.
 
-### 2. Standard Static Form (Tensor Reconstruction)
-In standard CP decomposition, the weight tensor $\mathcal{W}$ is approximated as the sum of $R$ rank-1 tensors (outer products):
+$$\min_{\Theta} \mathcal{J} = \underbrace{\frac{1}{N} \sum_{i=1}^{N} \mathcal{L}(\hat{\mathbf{y}}_i, \mathbf{y}_i)}_{\text{Task Loss}} + \lambda \sum_{k=1}^{K} \left( \mathbb{E}[\|z_{\text{pure}}^{(k)}\|_0] + \mathbb{E}[\|z_{\text{int}}^{(k)}\|_0] \right)$$
 
-$$
-\mathcal{W} \approx \sum_{r=1}^{R} \mathbf{u}^{(1)}_r \circ \mathbf{u}^{(2)}_r \circ \dots \circ \mathbf{u}^{(K)}_r
-$$
+Variable Definitions:
 
-### 3. Functional Form (Tensor Contraction)
-The output $y$ is the result of contracting the tensor $\mathcal{W}$ with the input vector $x$ along all $K$ modes:
+- $\Theta$: The set of all learnable parameters ($\mathbf{U}, \mathbf{W}, \mathbf{b}, \text{gates}$).
+- $\mathcal{L}(\cdot)$: The loss function (e.g., MSE for regression, Cross-Entropy for classification).
+- $z \sim \text{HardConcrete}(\alpha)$: The binary stochastic gates.
+- $\mathbb{E}[\|\cdot\|_0]$: The expected $L_0$ cost, calculated as the probability of the gate being non-zero: $\sigma(\log \alpha - \beta \log \frac{-l}{r})$.
 
-$$
-y = \mathcal{W} \times_1 x \times_2 x \dots \times_K x
-$$
+### Dual-Stream Predictive Model
 
-### 4. Derivation
-Substitute the CP approximation into the contraction equation:
+The network models the output $\hat{\mathbf{y}} \in \mathbb{R}^{C}$ as a gated summation of explicit univariate power terms and implicit multivariate interaction terms up to order $K$:
 
-$$
-\begin{aligned}
-y &= \left( \sum_{r=1}^{R} \mathbf{u}^{(1)}_r \circ \mathbf{u}^{(2)}_r \circ \dots \circ \mathbf{u}^{(K)}_r \right) \times_1 x \dots \times_K x \\
-\end{aligned}
-$$
+$$\hat{y}_c = b_c + \sum_{k=1}^{K} \left[ \underbrace{z_{\text{pure}}^{(k)} (\mathbf{w}_{\text{pure}}^{(k, c)})^\top \mathbf{x}^{ k}}_{\text{Explicit Power Stream}} + \underbrace{z_{\text{int}}^{(k)} \sum_{r=1}^{R} \left( \prod_{m=1}^{k} (\mathbf{u}_{k, m, r}^{(c)})^\top \mathbf{x} \right)}_{\text{Implicit Interaction Stream (CP)}} \right]$$
 
-By the **distributive property** of tensor contraction over addition, and the property that contracting a rank-1 outer product results in the product of scalar dot products ($(u \circ v) \times_1 x \times_2 x = (u^Tx)(v^Tx)$):
+Variable Definitions:
+- $c \in \{1, \dots, C\}$: The class index. Each class possesses independent weight parameters but shares the structural gates $z$.
+- $b_c \in \mathbb{R}$: The bias term for class $c$.
+- $\mathbf{x}^{k} \in \mathbb{R}^{D}$: The element-wise $k$-th power of the input vector.
+- $\mathbf{w}_{\text{pure}}^{(k, c)} \in \mathbb{R}^{D}$: The learnable weight vector projecting the $k$-th order power term for class $c$.
+- $R$: The fixed rank hyperparameter determining the capacity of the interaction approximation.
+- $\mathbf{u}_{k, m, r}^{(c)} \in \mathbb{R}^{D}$: The factor vector corresponding to the $m$-th component of the $r$-th rank term for order $k$ and class $c$.
 
-$$
-\begin{aligned}
-y &= \sum_{r=1}^{R} \left( (\mathbf{u}^{(1)}_r \cdot x) \times (\mathbf{u}^{(2)}_r \cdot x) \times \dots \times (\mathbf{u}^{(K)}_r \cdot x) \right) \\
-\end{aligned}
-$$
+Operation Logic: The term $\prod_{m=1}^{k} (\mathbf{u}^\top \mathbf{x})$ computes the $r$-th interaction feature as a scalar product of $k$ linear projections, and $\sum_{r=1}^{R}$ aggregates these $R$ components directly, eliminating the need for external projection matrices.
 
-This can be rewritten in matrix notation. Let $P^{(k)} = x^T U^{(k)} \in \mathbb{R}^{1 \times R}$ be the projection of $x$ onto the $k$-th factor space. The term inside the summation corresponds to the element-wise product (Hadamard product) of these projections at index $r$:
-
-$$
-y = \sum_{r=1}^{R} \left( \prod_{k=1}^{K} P^{(k)}_r \right)
-$$
-
-**Conclusion:**
-This final equation matches exactly the code implementation: **Project** input to latent space $\rightarrow$ **Element-wise Product** across orders $\rightarrow$ **Sum** (via linear layer).
-
-***
-
-## Part 2: Mathematical Workflow (Order $K=5$)
-
-This section details the forward pass and training dynamics for a **5th-Order** interaction term.
-
-### 1. Hypothesis & Setup
-* **Objective:** Model a global 5th-order interaction $\mathcal{I}_5(x)$.
-* **Input Batch:** $X \in \mathbb{R}^{B \times D}$ ($B$: Batch size, $D$: Input dim).
-* **Hyperparameters:** Rank $R$, Order $K=5$, Output Classes $C_{out}$.
-* **Learnable Parameters:**
-    * **Factors:** 5 matrices $\{U^{(1)}, U^{(2)}, U^{(3)}, U^{(4)}, U^{(5)}\}$, each $U^{(k)} \in \mathbb{R}^{D \times R}$.
-    * **Coefficients:** $W_{int} \in \mathbb{R}^{R \times C_{out}}$.
-
-### 2. Forward Propagation
-
-#### Step A: Latent Projection (Dimension Reduction)
-For each order $k \in \{1, \dots, 5\}$, project the input $X$ into the shared rank space using the specific factor matrix $U^{(k)}$.
-
-$$
-P^{(k)} = X U^{(k)}
-$$
-* **Dim Change:** $[B, D] \times [D, R] \rightarrow [B, R]$
-* *Result:* We obtain a list of 5 matrices: $[P^{(1)}, P^{(2)}, P^{(3)}, P^{(4)}, P^{(5)}]$.
-
-#### Step B: Interaction (Hadamard Product)
-Compute the non-linear interaction by taking the element-wise product of all projected features along the order dimension.
-
-$$
-Z = P^{(1)} \odot P^{(2)} \odot P^{(3)} \odot P^{(4)} \odot P^{(5)}
-$$
-* **Operation:** $\odot$ denotes Element-wise Hadamard product.
-* **Dim Change:** Collapse 5 tensors of $[B, R] \rightarrow [B, R]$.
-* *Meaning:* $Z_{b,r}$ represents the strength of the $r$-th interaction pattern for sample $b$.
-
-#### Step C: Output Mapping (Linear Combination)
-Map the latent interaction features $Z$ to the final class logits.
-
-$$
-\hat{Y}_{int} = Z W_{int}
-$$
-* **Dim Change:** $[B, R] \times [R, C_{out}] \rightarrow [B, C_{out}]$.
-
-### 3. Training Process
-
-#### Loss Function
-The total objective function $\mathcal{L}$ combines prediction error and regularization.
-
-$$
-\mathcal{L} = \underbrace{\text{MSE}(\hat{Y}, Y_{GT})}_{\text{Fidelity}} + \lambda \underbrace{\mathcal{R}(Gates)}_{\text{Sparsity}} + \gamma \sum_{k=1}^5 \|U^{(k)}\|_F^2
-$$
-
-#### Backpropagation (Gradient Flow)
-Gradients flow backward from $\mathcal{L}$ through the chain rule.
-
-1.  **Update Coefficients ($W_{int}$):**
-    $$\frac{\partial \mathcal{L}}{\partial W_{int}} = Z^T (\hat{Y} - Y)$$
-    * *Update:* Simple linear regression update.
-
-2.  **Update Factors ($U^{(k)}$):**
-    The gradient for the $k$-th factor depends on the product of **all other factors** ($j \neq k$).
-    $$\frac{\partial \mathcal{L}}{\partial U^{(k)}} = X^T \left[ \left( (\hat{Y} - Y) W_{int}^T \right) \odot \left( \bigodot_{j \neq k} P^{(j)} \right) \right]$$
-    * *Insight:* For $U^{(k)}$ to learn, the other projections $P^{(j)}$ must be non-zero. This creates a coupled optimization landscape (non-convex), requiring good initialization (Xavier) and warm-up to establish a direction.
+Structural Gates: $z_{\text{pure}}^{(k)}, z_{\text{int}}^{(k)} \in \{0, 1\}$: The differentiable binary gates that determine whether the $k$-th order terms are included in the final model structure.
