@@ -30,6 +30,7 @@ class L0Gate(nn.Module):
             
         # Clamp to [0, 1] range to act as a gate
         z = torch.clamp(s, min=0.0, max=1.0)
+        # Broadcasting z (scalar) over x [Batch, Num_Classes]
         return x * z
 
     def regularization_term(self):
@@ -41,21 +42,23 @@ class SparseSearchAgent(nn.Module):
     """
     The Orchestrator for Differentiable Search.
     
-    Responsibilities:
-    1. Instantiates the Math Core (DualStreamInteractionLayer).
-    2. Manages control flow components (Gates, BatchNorm, Bias).
-    3. Aggregates outputs from all streams.
-    4. Calculates sparsity regularization costs.
+    Updates:
+    - Adapted 'inspect_gates' to handle the removal of 'coeffs_interact' in the core layer.
+    - Now monitors 'factors' magnitude directly for the Interaction Stream.
     """
     def __init__(self, input_dim=10, num_classes=1, rank=8, max_order=5):
         super().__init__()
         self.input_dim = input_dim
+        # Instantiate the updated Math Core (Parallel Neuron Version)
         self.core = DualStreamInteractionLayer(input_dim, num_classes, rank, max_order)
 
         self.bias = nn.Parameter(torch.zeros(num_classes))
+        
+        # Gates are shared across all classes (Structure Sharing)
         self.gates_pure = nn.ModuleList([L0Gate() for _ in range(max_order)])
         self.gates_int  = nn.ModuleList([L0Gate() for _ in range(max_order)])
 
+        # BN maintains statistics for [Batch, Num_Classes]
         self.bn_pure = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
         self.bn_int = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
 
@@ -65,14 +68,15 @@ class SparseSearchAgent(nn.Module):
         
         # --- Stream 1: Pure Power Terms ---
         for i, gate in enumerate(self.gates_pure):
-
+            # core returns [Batch, Num_Classes]
             term = self.core.get_pure_term(x, i)
+            # BN expects [Batch, Num_Classes], which is correct
             term_norm = self.bn_pure[i](term)
             output = output + gate(term_norm, training=training)
 
         # --- Stream 2: Interaction Terms ---
         for i, gate in enumerate(self.gates_int):
-
+            # return [Batch, Num_Classes]
             term = self.core.get_interaction_term(x, i)
             term_norm = self.bn_int[i](term)
             output = output + gate(term_norm, training=training)
@@ -89,11 +93,9 @@ class SparseSearchAgent(nn.Module):
         
         with torch.no_grad():
             for i, gate in enumerate(self.gates_pure):
-                # regularization_term() returns the probability P
                 if gate.regularization_term() > threshold:
                     pure_active.append(i + 1)
             
-            # Check Interaction Stream Gates
             for i, gate in enumerate(self.gates_int):
                 if gate.regularization_term() > threshold:
                     int_active.append(i + 1)
@@ -103,34 +105,49 @@ class SparseSearchAgent(nn.Module):
     def calculate_regularization(self):
         """
         Computes the total L0 regularization loss.
-        Costs are balanced based on input dimensions (Sqrt Penalty).
         """
         reg_loss = 0.0
-        
-        # Cost factor: Sqrt(Input_Dim) ensures fair competition between simple and complex terms
-        cost_base = np.sqrt(self.input_dim)
+        # Optional: Cost scaling factor
+        # cost_base = np.sqrt(self.input_dim) 
         
         for gate in self.gates_pure:
-            reg_loss += gate.regularization_term() #* cost_base
+            reg_loss += gate.regularization_term()
             
         for gate in self.gates_int:
-            reg_loss += gate.regularization_term() #* cost_base
+            reg_loss += gate.regularization_term()
             
         return reg_loss
 
     def inspect_gates(self, threshold=0.5):
-        """Utility to visualize gate status and weight magnitudes."""
+        """
+        Utility to visualize gate status and weight magnitudes.
+        Refactored to handle the new core structure (factors vs coeffs).
+        """
         print(f"\n>>> Gate Inspection (Threshold={threshold}) <<<")
         
-        def _fmt(name, gates, coeffs):
+        def _get_weight_mag(param_or_list):
+            # Helper: Handles both Parameter (Pure) and ParameterList (Interaction)
+            if isinstance(param_or_list, nn.Parameter):
+                return param_or_list.detach().abs().mean().item()
+            elif isinstance(param_or_list, (nn.ParameterList, list)):
+                # Average magnitude across all factor tensors for this order
+                mags = [p.detach().abs().mean() for p in param_or_list]
+                return torch.tensor(mags).mean().item()
+            return 0.0
+
+        def _fmt(name, gates, params_source):
             info = []
-            for i, (gate, coeff) in enumerate(zip(gates, coeffs)):
+            for i, gate in enumerate(gates):
                 prob = gate.regularization_term().item()
-                weight = coeff.detach().abs().mean().item()
+                # Determine weight magnitude
+                # params_source is a list/ModuleList. Access the i-th element.
+                weight = _get_weight_mag(params_source[i])
+                
                 status = "[ON]" if prob > threshold else " .  "
                 info.append(f"Ord{i+1}:{status} P={prob:.4f} W={weight:.4f}")
             return f"{name}:\n  " + " | ".join(info)
 
         print(_fmt("Pure Stream", self.gates_pure, self.core.coeffs_pure))
-        print(_fmt("Int  Stream", self.gates_int, self.core.coeffs_interact))
+        # Note: We pass self.core.factors (ModuleList of ParameterLists) here
+        print(_fmt("Int  Stream", self.gates_int, self.core.factors))
         print("-" * 60)
