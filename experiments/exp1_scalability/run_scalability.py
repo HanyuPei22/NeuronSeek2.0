@@ -2,138 +2,157 @@ import sys
 import os
 import time
 import pandas as pd
-import torch
-import torch.nn as nn
 import numpy as np
+import torch
 from func_timeout import func_timeout, FunctionTimedOut
 
-# Adjust path
+# Adjust path to project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
+# Imports (保持不变)
 from src.searchers.neuronseek_searcher import NeuronSeekSearcher
 from src.searchers.tnsr_searcher import TNSRSearcher
 from src.searchers.sr_searcher import SRSearcher
 from src.searchers.eql_searcher import EQLSearcher
 from src.searchers.metasymnet_searcher import MetaSymNetSearcher
 from src.utils.data_utils import get_synthetic_data
+from experiments.common.structure_evaluator import retrain_and_evaluate
 
-def evaluate_model(searcher, X_test, y_test):
+def run_experiment(searcher_cls, params, X_train, y_train, X_test, y_test, timeout=60, seed=42):
     """
-    Evaluates the trained searcher on test data.
-    Returns: MSE (Float)
+    Executes one experiment run with explicit seed setting if applicable.
     """
-    try:
-        # Most searchers don't have a direct 'predict' in the base class,
-        # but their internal models do. We need a unified way.
-        
-        # 1. NeuronSeek / EQL / MetaSymNet (Neural Based)
-        if hasattr(searcher, 'model') and searcher.model is not None:
-            searcher.model.eval()
-            with torch.no_grad():
-                X_t = torch.tensor(X_test, dtype=torch.float32)
-                pred = searcher.model(X_t).numpy()
-                
-        # 2. TNSR / SR (Symbolic Based)
-        elif hasattr(searcher, 'engine'):
-            # TNSR logic
-            if hasattr(searcher.engine, 'neuron'): # TNSR
-                 formula = searcher.engine.neuron
-                 # Re-eval strategy or use internal predict if available
-                 # For simplicity in this script, let's assume we can't easily eval string 
-                 # without the parser. 
-                 # Let's Skip MSE for TNSR/SR in this quick check OR implement eval.
-                 return 0.0 # Placeholder for Symbolic methods if eval is hard
-            
-            # SR (gplearn)
-            if hasattr(searcher.engine, 'predict'): 
-                pred = searcher.engine.predict(X_test)
-            else:
-                return 999.0
-        else:
-            return 999.0
-
-        # Calculate MSE
-        mse = np.mean((pred - y_test)**2)
-        return mse
-    except Exception as e:
-        # print(f"Eval failed: {e}")
-        return 999.0
-
-def run_search_with_metrics(searcher, X, y, timeout=60):
-    """
-    Wraps fit() with timeout AND calculates MSE.
-    """
-    # Split Train/Test for evaluation (80/20)
-    N = len(X)
-    split = int(N * 0.8)
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
+    # Set seed for reproducibility frameworks (numpy/torch)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     
-    start = time.time()
+    # --- 1. Initialization ---
     try:
-        # Run FIT with timeout
-        func_timeout(timeout, searcher.fit, args=(X_train, y_train))
-        end = time.time()
-        time_cost = end - start
-        
-        # Run EVAL
-        mse = evaluate_model(searcher, X_test, y_test)
-        
-        return time_cost, "Success", mse
-        
-    except FunctionTimedOut:
-        return timeout, "Timeout", 999.0
+        # Some searchers might accept 'seed' or 'random_state' in params
+        # We can inject it if the class supports it, or rely on global seed
+        model = searcher_cls(**params)
     except Exception as e:
-        print(f"Error: {e}")
-        return 0, "Failed", 999.0
+        print(f"    [Init Error] {searcher_cls.__name__}: {e}")
+        return 0.0, "Init_Fail", 999.0
+
+    # --- 2. Search Phase (Fit) ---
+    start_time = time.time()
+    status = "Success"
+    try:
+        func_timeout(timeout, model.fit, args=(X_train, y_train))
+    except FunctionTimedOut:
+        status = "Timeout"
+    except Exception as e:
+        print(f"    [Fit Error] {e}")
+        status = "Failed"
+    
+    search_time = time.time() - start_time
+
+    # --- 3. Structure Extraction ---
+    try:
+        structure = model.get_structure_info()
+    except Exception as e:
+        print(f"    [Structure Extraction Error] {e}")
+        structure = {'type': 'failed'}
+
+    # --- 4. Retrain Phase (Strict Probe) ---
+    mse = 999.0
+    
+    if status != "Init_Fail":
+        try:
+            mse = retrain_and_evaluate(
+                model, 
+                structure, 
+                X_train, y_train, 
+                X_test, y_test, 
+                epochs=50
+            )
+            # Clip extreme values for stability
+            if np.isnan(mse) or np.isinf(mse) or mse > 1e6:
+                mse = 1e6
+        except Exception as e:
+            print(f"    [Retrain Error] {e}")
+
+    return search_time, status, mse
 
 def main():
+    # --- Experiment Config ---
     dims = [10, 30, 50, 100]
-    timeout_sec = 60 
+    timeout_sec = 60
+    n_trials = 5  # [CRITICAL] Run 5 independent trials per setting
     
     results = []
     
+    print(f"Starting Scalability Experiment: {n_trials} trials per setting, Timeout={timeout_sec}s")
+
     for D in dims:
-        print(f"\n{'='*30}\nTesting Dimension: {D}\n{'='*30}")
-        X, y = get_synthetic_data(D, n_samples=2000)
+        print(f"\n{'='*60}\nTesting Dimension: {D}\n{'='*60}")
         
-        # 1. NeuronSeek
-        print(">>> NeuronSeek...")
-        ns = NeuronSeekSearcher(D, epochs=100)
-        t_ns, stat_ns, mse_ns = run_search_with_metrics(ns, X, y, timeout_sec)
-        print(f"   [NS] Time: {t_ns:.2f}s | MSE: {mse_ns:.4f}")
+        # Generate Data (Fix data for all methods to ensure fair comparison on this Dimension)
+        X, y = get_synthetic_data(D, n_samples=2500)
+        split = 2000
+        X_train, y_train = X[:split], y[:split]
+        X_test, y_test = X[split:], y[split:]
         
-        # 2. TN-SR
-        print(">>> TN-SR...")
-        sr = TNSRSearcher(D, population_size=1000, generations=10)
-        # TNSR evaluation is tricky because it returns a string. 
-        # For the paper chart, you might focus on Time, but let's try to capture result.
-        t_sr, stat_sr, mse_sr = run_search_with_metrics(sr, X, y, timeout_sec)
-        # Note: TNSR MSE might be 0.0 in this script placeholder, ignore for now
+        # Protocol Definition
+        # Note: Rank=8 is explicit for NeuronSeek
+        protocol = [
+            ("NeuronSeek", NeuronSeekSearcher, {'input_dim': D, 'epochs': 80, 'rank': 8}),
+            ("TN-SR", TNSRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
+            ("EQL", EQLSearcher, {'input_dim': D, 'epochs': 500}),
+            ("MetaSymNet", MetaSymNetSearcher, {'input_dim': D, 'time_limit': timeout_sec})
+        ]
         
-        # 3. EQL
-        print(">>> EQL...")
-        eql = EQLSearcher(D, epochs=500)
-        t_eql, stat_eql, mse_eql = run_search_with_metrics(eql, X, y, timeout_sec)
-        print(f"   [EQL] Time: {t_eql:.2f}s | MSE: {mse_eql:.4f}")
+        try:
+            protocol.insert(2, ("Standard-SR", SRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}))
+        except: pass
 
-        # 4. MetaSymNet
-        print(">>> MetaSymNet...")
-        meta = MetaSymNetSearcher(D, time_limit=timeout_sec)
-        t_meta, stat_meta, mse_meta = run_search_with_metrics(meta, X, y, timeout_sec)
-        print(f"   [Meta] Time: {t_meta:.2f}s | MSE: {mse_meta:.4f}")
+        # Iterate over methods
+        for name, cls, params in protocol:
+            print(f">>> Method: {name}")
+            
+            trial_mses = []
+            trial_times = []
+            success_count = 0
+            
+            # [CRITICAL] Loop for repeated trials
+            for i in range(n_trials):
+                # Use different seed for each trial
+                seed = 42 + i 
+                
+                t, stat, mse = run_experiment(cls, params, X_train, y_train, X_test, y_test, timeout=timeout_sec, seed=seed)
+                
+                trial_mses.append(mse)
+                trial_times.append(t)
+                
+                if stat == "Success" or (stat == "Timeout" and mse < 1e5):
+                    success_count += 1
+                
+                print(f"    Trial {i+1}/{n_trials}: Time={t:.1f}s | MSE={mse:.4f} | ({stat})")
+            
+            # Calculate Statistics
+            mean_mse = np.mean(trial_mses)
+            std_mse = np.std(trial_mses)
+            mean_time = np.mean(trial_times)
+            
+            print(f"  [AVG] {name}: MSE = {mean_mse:.4f} ± {std_mse:.4f}")
+            
+            # Record Result Row
+            row = {
+                'Dim': D,
+                'Method': name,
+                'MSE_Mean': mean_mse,
+                'MSE_Std': std_mse,
+                'Time_Mean': mean_time,
+                'Success_Rate': success_count / n_trials
+            }
+            results.append(row)
 
-        results.append({
-            'Dim': D,
-            'NS_Time': t_ns, 'NS_MSE': mse_ns,
-            'EQL_Time': t_eql, 'EQL_MSE': mse_eql,
-            'Meta_Time': t_meta, 'Meta_MSE': mse_meta
-        })
-        
+    # Save Final Aggregated Report
     df = pd.DataFrame(results)
-    print("\nFINAL REPORT WITH MSE")
+    print("\nFINAL SCALABILITY REPORT (Aggregated)")
     print(df)
-    df.to_csv("scalability_mse_results.csv", index=False)
+    df.to_csv("scalability_strict_aggregated.csv", index=False)
 
 if __name__ == "__main__":
     main()

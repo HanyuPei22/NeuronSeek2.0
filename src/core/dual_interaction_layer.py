@@ -81,3 +81,34 @@ class DualStreamInteractionLayer(nn.Module):
                 logits = logits + (term @ self.coeffs_pure[i])
                 
         return logits
+    
+    def get_pure_term(self, x: torch.Tensor, order_idx: int) -> torch.Tensor:
+        """
+        Computes the Pure Term (explicit polynomial term) for a specific order.
+        order_idx: 0 corresponds to order=1, 1 corresponds to order=2...
+        Returns: [Batch, Num_Classes]
+        """
+        order = order_idx + 1
+        # Compute x^k
+        term = x if order == 1 else x.pow(order)
+        # Projection: [B, D] @ [D, C] -> [B, C]
+        return term @ self.coeffs_pure[order_idx]
+
+    def get_interaction_term(self, x: torch.Tensor, order_idx: int) -> torch.Tensor:
+        """
+        Computes the Interaction Term (CP Decomposition term) for a specific order.
+        Returns: [Batch, Num_Classes]
+        """
+        # Retrieve the list of factors for the corresponding order
+        factors = self.factors[order_idx]
+        
+        # 1. Parallel Projection: [B, D] @ [D, R, C] -> [B, R, C]
+        projections = [torch.einsum('bd, drc -> brc', x, u) for u in factors]
+        
+        # 2. Product
+        combined = projections[0]
+        for p in projections[1:]:
+            combined = combined * p
+        
+        # 3. Summation (Strict CP Aggregation) -> [B, C]
+        return torch.sum(combined, dim=1)
