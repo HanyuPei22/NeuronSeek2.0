@@ -1,6 +1,7 @@
 import sys
 import os
 import time
+import argparse
 import pandas as pd
 import numpy as np
 import torch
@@ -9,7 +10,7 @@ from func_timeout import func_timeout, FunctionTimedOut
 # Adjust path to project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-# Imports (保持不变)
+# Imports
 from src.searchers.neuronseek_searcher import NeuronSeekSearcher
 from src.searchers.tnsr_searcher import TNSRSearcher
 from src.searchers.sr_searcher import SRSearcher
@@ -20,7 +21,7 @@ from experiments.common.structure_evaluator import retrain_and_evaluate
 
 def run_experiment(searcher_cls, params, X_train, y_train, X_test, y_test, timeout=60, seed=42):
     """
-    Executes one experiment run with explicit seed setting if applicable.
+    Executes one experiment run with explicit seed setting.
     """
     # Set seed for reproducibility frameworks (numpy/torch)
     torch.manual_seed(seed)
@@ -28,8 +29,6 @@ def run_experiment(searcher_cls, params, X_train, y_train, X_test, y_test, timeo
     
     # --- 1. Initialization ---
     try:
-        # Some searchers might accept 'seed' or 'random_state' in params
-        # We can inject it if the class supports it, or rely on global seed
         model = searcher_cls(**params)
     except Exception as e:
         print(f"    [Init Error] {searcher_cls.__name__}: {e}")
@@ -75,17 +74,38 @@ def run_experiment(searcher_cls, params, X_train, y_train, X_test, y_test, timeo
 
     return search_time, status, mse
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Run Scalability Experiments")
+    
+    # Dimensions: Accept single int or list of ints
+    parser.add_argument('--dims', type=int, nargs='+', default=[10, 30, 50, 100],
+                        help='List of input dimensions to test (e.g., --dims 10 30)')
+    
+    # Methods: Accept specific method names
+    parser.add_argument('--methods', type=str, nargs='+', 
+                        default=['NeuronSeek', 'TN-SR', 'Standard-SR', 'EQL', 'MetaSymNet'],
+                        choices=['NeuronSeek', 'TN-SR', 'Standard-SR', 'EQL', 'MetaSymNet'],
+                        help='List of methods to run')
+    
+    # Trials and Seeds
+    parser.add_argument('--n_trials', type=int, default=3, help='Number of trials per setting')
+    parser.add_argument('--start_seed', type=int, default=42, help='Starting random seed')
+    
+    # Other settings
+    parser.add_argument('--timeout', type=int, default=60, help='Timeout in seconds')
+    parser.add_argument('--output', type=str, default='scalability_strict_results.csv', 
+                        help='Output CSV filename')
+    
+    return parser.parse_args()
+
 def main():
-    # --- Experiment Config ---
-    dims = [10, 30, 50, 100]
-    timeout_sec = 60
-    n_trials = 5  # [CRITICAL] Run 5 independent trials per setting
+    args = parse_arguments()
     
     results = []
     
-    print(f"Starting Scalability Experiment: {n_trials} trials per setting, Timeout={timeout_sec}s")
+    print(f"Starting Experiment: Trials={args.n_trials}, Dims={args.dims}, Methods={args.methods}")
 
-    for D in dims:
+    for D in args.dims:
         print(f"\n{'='*60}\nTesting Dimension: {D}\n{'='*60}")
         
         # Generate Data (Fix data for all methods to ensure fair comparison on this Dimension)
@@ -95,17 +115,18 @@ def main():
         X_test, y_test = X[split:], y[split:]
         
         # Protocol Definition
-        # Note: Rank=8 is explicit for NeuronSeek
-        protocol = [
-            ("NeuronSeek", NeuronSeekSearcher, {'input_dim': D, 'epochs': 80, 'rank': 8}),
-            ("TN-SR", TNSRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
-            ("EQL", EQLSearcher, {'input_dim': D, 'epochs': 500}),
-            ("MetaSymNet", MetaSymNetSearcher, {'input_dim': D, 'time_limit': timeout_sec})
-        ]
+        # Define all available methods here
+        all_methods = {
+            "NeuronSeek": (NeuronSeekSearcher, {'input_dim': D, 'epochs': 80, 'rank': 8}),
+            "TN-SR": (TNSRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
+            "Standard-SR": (SRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
+            "EQL": (EQLSearcher, {'input_dim': D, 'epochs': 500}),
+            "MetaSymNet": (MetaSymNetSearcher, {'input_dim': D, 'time_limit': args.timeout})
+        }
         
-        try:
-            protocol.insert(2, ("Standard-SR", SRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}))
-        except: pass
+        # Filter methods based on arguments
+        protocol = [(name, all_methods[name][0], all_methods[name][1]) 
+                    for name in args.methods if name in all_methods]
 
         # Iterate over methods
         for name, cls, params in protocol:
@@ -115,12 +136,17 @@ def main():
             trial_times = []
             success_count = 0
             
-            # [CRITICAL] Loop for repeated trials
-            for i in range(n_trials):
-                # Use different seed for each trial
-                seed = 42 + i 
+            for i in range(args.n_trials):
+                # Dynamic Seed: Base + Trial Index
+                current_seed = args.start_seed + i
                 
-                t, stat, mse = run_experiment(cls, params, X_train, y_train, X_test, y_test, timeout=timeout_sec, seed=seed)
+                t, stat, mse = run_experiment(
+                    cls, params, 
+                    X_train, y_train, 
+                    X_test, y_test, 
+                    timeout=args.timeout, 
+                    seed=current_seed
+                )
                 
                 trial_mses.append(mse)
                 trial_times.append(t)
@@ -128,7 +154,7 @@ def main():
                 if stat == "Success" or (stat == "Timeout" and mse < 1e5):
                     success_count += 1
                 
-                print(f"    Trial {i+1}/{n_trials}: Time={t:.1f}s | MSE={mse:.4f} | ({stat})")
+                print(f"    Trial {i+1}/{args.n_trials} (Seed {current_seed}): Time={t:.1f}s | MSE={mse:.4f} | ({stat})")
             
             # Calculate Statistics
             mean_mse = np.mean(trial_mses)
@@ -144,15 +170,19 @@ def main():
                 'MSE_Mean': mean_mse,
                 'MSE_Std': std_mse,
                 'Time_Mean': mean_time,
-                'Success_Rate': success_count / n_trials
+                'Success_Rate': success_count / args.n_trials
             }
             results.append(row)
 
     # Save Final Aggregated Report
     df = pd.DataFrame(results)
-    print("\nFINAL SCALABILITY REPORT (Aggregated)")
+    
+    # If file exists, append (header only if new)
+    file_exists = os.path.isfile(args.output)
+    df.to_csv(args.output, mode='a', header=not file_exists, index=False)
+    
+    print(f"\nResults saved to {args.output}")
     print(df)
-    df.to_csv("scalability_strict_aggregated.csv", index=False)
 
 if __name__ == "__main__":
     main()
