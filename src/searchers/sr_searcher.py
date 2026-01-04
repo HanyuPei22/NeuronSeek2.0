@@ -17,13 +17,16 @@ class SRSearcher(BaseStructureSearcher):
             generations=generations,
             function_set=('add', 'sub', 'mul', 'div'), 
             metric='mse',
-            n_jobs=1,
-            random_state=42
+            n_jobs=1
         )
         self.best_program = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         y_flat = y.ravel() if y.ndim > 1 else y
+        
+        if not hasattr(self.est, '_validate_data'):
+            self.est._validate_data = self.est._validate_input
+
         self.est.fit(X, y_flat)
         self.best_program = self.est._program
 
@@ -71,3 +74,19 @@ class SRSearcher(BaseStructureSearcher):
             'raw': raw_str,
             'gplearn_obj': self.best_program # Pass object for execution if possible
         }]
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Executes prediction using the underlying gplearn estimator.
+        Required for the structure evaluator to perform symbolic scaling.
+        """
+        # Check if estimator exists and is fitted (check for _program attribute)
+        if hasattr(self, 'est') and hasattr(self.est, '_program'):
+            try:
+                return self.est.predict(X)
+            except Exception as e:
+                print(f"[SRSearcher Predict Error] {e}")
+                return np.zeros(X.shape[0])
+        
+        # Fallback if not fitted
+        return np.zeros(X.shape[0])

@@ -249,3 +249,49 @@ class TNSRSearcher(BaseStructureSearcher):
                     'raw': str(term)
                 })
         return parsed_terms
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Executes the best found symbolic formula on input X.
+        """
+        # 1. Retrieve the best formula string
+        # Assumes get_structure_info returns terms containing the formula
+        structure = self.get_structure_info()
+        
+        # Case A: If using gplearn estimator internally
+        if hasattr(self, 'est_gp') and self.est_gp is not None:
+            return self.est_gp.predict(X)
+            
+        # Case B: If only the formula string is available (self.best_formula_str)
+        # e.g., "-x0**4 + x1**2"
+        formula = None
+        if hasattr(self, 'best_formula'): 
+            formula = self.best_formula
+        elif 'terms' in structure:
+            # Try to find formula string in structure info
+            raw = structure['terms'][0]
+            if 'formula' in raw: formula = raw['formula']
+
+        if formula:
+            # Safely map x0, x1... to columns of X
+            # Create a local environment mapping x0, x1... to X[:,0], X[:,1]...
+            local_dict = {}
+            for i in range(X.shape[1]):
+                local_dict[f'x{i}'] = X[:, i]
+                local_dict[f'x_{i}'] = X[:, i] # Support both formats
+            
+            try:
+                # Evaluate the string formula using numpy context
+                # Note: Requires the formula to be valid python/numpy syntax
+                pred = eval(formula, {"__builtins__": None, "np": np}, local_dict)
+                
+                # If result is scalar (e.g., formula is "0.5"), broadcast to array
+                if np.isscalar(pred):
+                    pred = np.full(X.shape[0], pred)
+                return pred
+            except Exception as e:
+                print(f"[Predict Eval Error] {e}")
+                return np.zeros(X.shape[0])
+        
+        # Fallback
+        return np.zeros(X.shape[0])

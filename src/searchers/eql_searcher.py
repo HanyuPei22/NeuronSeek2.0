@@ -131,6 +131,6 @@ class EQLSearcher(BaseStructureSearcher):
             
         return {
             'type': 'explicit_terms',
-            'raw_formula': f"EQL_Net(In={len(active_indices)}, Nodes={active_funcs})",
+            'description': f"EQL_Net(In={len(active_indices)}, Nodes={active_funcs})",
             'terms': terms
         }

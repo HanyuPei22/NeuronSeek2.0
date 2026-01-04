@@ -220,3 +220,49 @@ class MetaSymNetSearcher(BaseStructureSearcher):
             parsed_terms.append(term_info)
             
         return parsed_terms
+    
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        """
+        Evaluates the best symbolic formula found by MetaSymNet on input X.
+        """
+        # 1. Retrieve the formula string
+        # MetaSymNetEngine stores it in best_formula
+        formula = None
+        if hasattr(self, 'engine') and self.engine.best_formula:
+            formula = self.engine.best_formula
+
+        if not formula:
+            return np.zeros(X.shape[0])
+
+        # 2. Prepare execution context
+        # Map variable names x0, x1... to columns of X
+        local_dict = {}
+        for i in range(X.shape[1]):
+            local_dict[f'x{i}'] = X[:, i]
+        
+        # Map math functions to numpy equivalents
+        # Note: MetaSymNet ops include +, -, *, /, sin, cos, exp, log, sqrt
+        local_dict.update({
+            'sin': np.sin,
+            'cos': np.cos,
+            'exp': np.exp,
+            'log': np.log,
+            'sqrt': np.sqrt,
+            'abs': np.abs
+        })
+
+        # 3. Evaluate
+        try:
+            # Use Python's eval with numpy context
+            # We explicitly allow numpy broadcasting for scalars
+            pred = eval(formula, {"__builtins__": None}, local_dict)
+            
+            # Handle case where formula is a constant (e.g. "0.5")
+            if np.isscalar(pred):
+                pred = np.full(X.shape[0], pred)
+                
+            return pred.astype(np.float32)
+            
+        except Exception as e:
+            # print(f"[MetaSymNet Predict Error] Formula: {formula}, Error: {e}")
+            return np.zeros(X.shape[0])
