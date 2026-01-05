@@ -27,15 +27,17 @@ class StructuralProbe(nn.Module):
             self.mode = 'neuronseek'
 
             self.rank = int(structure_info.get('rank', 8)) 
+            #self.rank = int(structure_info.get('rank', 2)) 
             self.p_ords = sorted(structure_info.get('pure_indices', []))
             self.i_ords = sorted(structure_info.get('interact_indices', []))
             
             # Instantiate Interaction Stream 
             # Use ModuleDict because it contains ParameterLists (which are Modules)
             self.interact_modules = nn.ModuleDict()
+            std_dev = 0.1 / np.sqrt(input_dim)
             for order in self.i_ords:
                 factors = nn.ParameterList([
-                    nn.Parameter(torch.randn(input_dim, self.rank, num_classes) * 0.02) 
+                    nn.Parameter(torch.randn(input_dim, self.rank, num_classes) * std_dev) 
                     for _ in range(order)
                 ])
                 self.interact_modules[str(order)] = factors
@@ -113,7 +115,7 @@ class StructuralProbe(nn.Module):
             
         return torch.zeros(x.shape[0], 1).to(x.device)
 
-def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_test, epochs=50):
+def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_test, epochs=60):
     """
     Retrains the discovered structure.
     Separates logic for standard mini-batch training vs symbolic full-batch scaling.
@@ -162,7 +164,7 @@ def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_t
             return 999.0
 
     # 4. Training Loop
-    optimizer = optim.Adam(probe.parameters(), lr=0.01)
+    optimizer = optim.Adam(probe.parameters(), lr=0.01, weight_decay=1e-4)
     probe.train()
 
     # --- Branch A: Symbolic Scaling (Full Batch) ---
