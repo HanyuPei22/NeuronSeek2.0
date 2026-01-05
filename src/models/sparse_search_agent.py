@@ -103,20 +103,29 @@ class SparseSearchAgent(nn.Module):
         return pure_active, int_active
 
     def calculate_regularization(self):
-        """
-        Computes the total L0 regularization loss.
-        """
-        reg_loss = 0.0
-        # Optional: Cost scaling factor
-        # cost_base = np.sqrt(self.input_dim) 
-        
-        for gate in self.gates_pure:
-            reg_loss += gate.regularization_term()
+            """
+            Computes L0 regularization with Order-Weighted penalties.
+            Penalty increases linearly or exponentially with the order of the term.
+            """
+            reg_loss = 0.0
             
-        for gate in self.gates_int:
-            reg_loss += gate.regularization_term()
-            
-        return reg_loss
+            # 1. Pure Terms Penalty
+            # Increasing penalty: Order 1 is cheap, Order 5 is expensive.
+            for i, gate in enumerate(self.gates_pure):
+
+                # Strategy: Linear increase penalty = 1.0 + (0.5 * order_index)
+                order_penalty = 1.0 + (0.5 * i)
+                reg_loss += order_penalty * gate.regularization_term()
+
+            # 2. Interaction Terms Penalty
+            # Interactions are more complex and prone to overfitting in high dims.
+            # We apply a slightly harsher penalty slope.
+            for i, gate in enumerate(self.gates_int):
+                # i=0 -> Order 1 (or 2 depending on definition), ...
+                order_penalty = 1.0 + (1.0 * i) 
+                reg_loss += order_penalty * gate.regularization_term()
+                
+            return reg_loss
 
     def inspect_gates(self, threshold=0.5):
         """

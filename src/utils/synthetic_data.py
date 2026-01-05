@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import TensorDataset
+import numpy as np  # 确保导入 numpy
 
 class SyntheticGenerator:
     """
@@ -28,7 +29,8 @@ class SyntheticGenerator:
         # This ensures Loss is always roughly in the same scale (e.g., ~1.0)
         # regardless of whether it's x^2 or x^5.
         y = y + self.noise * torch.randn_like(y)
-        y = (y - y.mean()) / (y.std() + 1e-8)
+        if y.std() > 1e-8:
+            y = (y - y.mean()) / y.std()
         
         return TensorDataset(X, y), truth
 
@@ -39,11 +41,12 @@ class SyntheticGenerator:
 
     def _generate_global_interaction(self, X, order):
         """
-        Generates global interactions.
+        Generates global interactions via random projections.
         """
         # 1. Generate random projection weights
         ws = []
         for _ in range(order):
+            # Xavier-like initialization for projection weights
             w = torch.randn(self.d, 1) / (self.d ** 0.5)
             ws.append(w)
             
@@ -54,7 +57,7 @@ class SyntheticGenerator:
             
         return full_term
 
-    # --- Formulas (Same structure, calling the improved helper) ---
+    # --- Formulas ---
 
     def _formula_pure(self, X, v):
         truth = {'pure': [], 'interact': []}
@@ -119,3 +122,12 @@ class SyntheticGenerator:
             y = c1*(X**2).sum(dim=1, keepdim=True) + c2*self._generate_global_interaction(X, 3)
             truth['pure'] = [2]; truth['interact'] = [3]
         return y, truth
+
+def get_synthetic_data(input_dim, n_samples=2500):
+    """
+    Legacy wrapper for compatibility with experiments.
+    """
+    gen = SyntheticGenerator(n_samples, input_dim)
+    dataset, _ = gen.get_data('hybrid', 0)
+    X, y = dataset.tensors
+    return X.numpy(), y.numpy()

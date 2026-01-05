@@ -102,7 +102,7 @@ class NeuronSeekSearcher(BaseStructureSearcher):
                 # Regularization (L0 on gates)
                 reg_loss = 0.0
                 if epoch >= warmup_end:
-                    reg_loss = 0.5 * self.agent.calculate_regularization() # Lambda hyperparam
+                    reg_loss = 0.7 * self.agent.calculate_regularization() # Lambda hyperparam
                 
                 loss = task_loss + reg_loss
                 loss.backward()
