@@ -6,11 +6,8 @@ import pandas as pd
 import numpy as np
 import torch
 from func_timeout import func_timeout, FunctionTimedOut
-
-# Adjust path to project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
-# Imports
 from src.searchers.neuronseek_searcher import NeuronSeekSearcher
 from src.searchers.tnsr_searcher import TNSRSearcher
 from src.searchers.sr_searcher import SRSearcher
@@ -179,9 +176,9 @@ def main():
     
     # If file exists, append (header only if new)
     file_exists = os.path.isfile(args.output)
-    df.to_csv(args.output, mode='a', header=not file_exists, index=False)
+    #df.to_csv(args.output, mode='a', header=not file_exists, index=False)
     
-    print(f"\nResults saved to {args.output}")
+    #print(f"\nResults saved to {args.output}")
     print(df)
 
 if __name__ == "__main__":
