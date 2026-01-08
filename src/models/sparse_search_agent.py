@@ -114,7 +114,7 @@ class SparseSearchAgent(nn.Module):
             for i, gate in enumerate(self.gates_pure):
 
                 # Strategy: Linear increase penalty = 1.0 + (0.5 * order_index)
-                order_penalty = 1.0 + (0.5 * i)
+                order_penalty = 1.0 #+ (0.5 * i)
                 reg_loss += order_penalty * gate.regularization_term()
 
             # 2. Interaction Terms Penalty
@@ -122,7 +122,7 @@ class SparseSearchAgent(nn.Module):
             # We apply a slightly harsher penalty slope.
             for i, gate in enumerate(self.gates_int):
                 # i=0 -> Order 1 (or 2 depending on definition), ...
-                order_penalty = 1.0 + (1.0 * i) 
+                order_penalty = 1.0 #+ (1.0 * i) 
                 reg_loss += order_penalty * gate.regularization_term()
                 
             return reg_loss
