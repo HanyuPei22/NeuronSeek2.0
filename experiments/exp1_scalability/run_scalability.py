@@ -61,7 +61,7 @@ def run_experiment(searcher_cls, params, X_train, y_train, X_test, y_test, timeo
                 structure, 
                 X_train, y_train, 
                 X_test, y_test, 
-                epochs=50
+                epochs=150
             )
             # Clip extreme values for stability
             if np.isnan(mse) or np.isinf(mse) or mse > 1e6:
@@ -114,7 +114,7 @@ def main():
         # Protocol Definition
         # Define all available methods here
         all_methods = {
-            "NeuronSeek": (NeuronSeekSearcher, {'input_dim': D, 'epochs': 80, 'rank': 8}),
+            "NeuronSeek": (NeuronSeekSearcher, {'input_dim': D, 'epochs': 80, 'rank': 8, 'reg_lambda': 0.05}),
             "TN-SR": (TNSRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
             "Standard-SR": (SRSearcher, {'input_dim': D, 'population_size': 1000, 'generations': 10}),
             "EQL": (EQLSearcher, {'input_dim': D, 'epochs': 500}),

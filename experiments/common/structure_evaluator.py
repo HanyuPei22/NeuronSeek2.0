@@ -34,7 +34,7 @@ class StructuralProbe(nn.Module):
             # Instantiate Interaction Stream 
             # Use ModuleDict because it contains ParameterLists (which are Modules)
             self.interact_modules = nn.ModuleDict()
-            std_dev = 0.1 / np.sqrt(input_dim)
+            std_dev = 0.05
             for order in self.i_ords:
                 factors = nn.ParameterList([
                     nn.Parameter(torch.randn(input_dim, self.rank, num_classes) * std_dev) 
@@ -47,7 +47,7 @@ class StructuralProbe(nn.Module):
             self.pure_modules = nn.ParameterDict()
             for order in self.p_ords:
                 self.pure_modules[str(order)] = nn.Parameter(
-                    torch.randn(input_dim, num_classes) * 0.02
+                    torch.randn(input_dim, num_classes) * std_dev
                 )
             
             # Global bias [C]
@@ -164,7 +164,7 @@ def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_t
             return 999.0
 
     # 4. Training Loop
-    optimizer = optim.Adam(probe.parameters(), lr=0.01, weight_decay=1e-4)
+    optimizer = optim.Adam(probe.parameters(), lr=0.01, weight_decay=1e-5)
     probe.train()
 
     # --- Branch A: Symbolic Scaling (Full Batch) ---
