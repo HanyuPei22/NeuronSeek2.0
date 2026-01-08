@@ -13,7 +13,7 @@ class L0Gate(nn.Module):
         self.temp = temperature
         self.limit_l = limit_l
         self.limit_r = limit_r
-        
+
         # Initialize log_alpha to achieve the desired initial probability
         init_val = np.log(init_prob / (1 - init_prob))
         self.log_alpha = nn.Parameter(torch.Tensor([init_val]))
@@ -36,6 +36,9 @@ class L0Gate(nn.Module):
     def regularization_term(self):
         """Returns the expected L0 cost (probability of the gate being non-zero)."""
         return torch.sigmoid(self.log_alpha - self.temp * np.log(-self.limit_l / self.limit_r))
+    
+    def get_prob(self):
+        return torch.sigmoid(self.log_alpha).item()
 
 
 class SparseSearchAgent(nn.Module):
@@ -49,6 +52,7 @@ class SparseSearchAgent(nn.Module):
     def __init__(self, input_dim=10, num_classes=1, rank=8, max_order=5):
         super().__init__()
         self.input_dim = input_dim
+        self.max_order = max_order
         # Instantiate the updated Math Core (Parallel Neuron Version)
         self.core = DualStreamInteractionLayer(input_dim, num_classes, rank, max_order)
 
@@ -59,8 +63,8 @@ class SparseSearchAgent(nn.Module):
         self.gates_int  = nn.ModuleList([L0Gate() for _ in range(max_order)])
 
         # BN maintains statistics for [Batch, Num_Classes]
-        self.bn_pure = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
-        self.bn_int = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=False) for _ in range(max_order))
+        self.bn_pure = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=True) for _ in range(max_order))
+        self.bn_int = nn.ModuleList(nn.BatchNorm1d(num_classes, affine=True) for _ in range(max_order))
 
     def forward(self, x, training=True):
         # Start with global bias

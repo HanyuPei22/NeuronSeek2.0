@@ -40,9 +40,9 @@ class DualStreamInteractionLayer(nn.Module):
         # Xavier initialization for stability
         for order_params in self.factors:
             for p in order_params:
-                nn.init.xavier_uniform_(p)
+                nn.init.normal_(p, std = 0.05)
         for p in self.coeffs_pure:
-            nn.init.xavier_uniform_(p)
+            nn.init.normal_(p, std = 0.05)
 
     def forward(self, x: torch.Tensor):
         """
