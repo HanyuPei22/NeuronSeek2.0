@@ -196,102 +196,87 @@ class VecSymRegressor:
 
 class TNSRSearcher(BaseStructureSearcher):
     """
-    Wrapper for your 'VecSymRegressor' (TN-SR).
-    Discovers GLOBAL transformations (x^2 + x), NOT index-specific features.
+    Wrapper for VecSymRegressor (TN-SR).
+    Acts as a 'Pure-Stream-Only' Structure Searcher.
     """
     def __init__(self, input_dim: int, population_size=2000, generations=20):
         super().__init__(input_dim)
+        # TN-SR Engine (Global Symbolic Regression)
         self.engine = VecSymRegressor(
             pop_size=population_size, 
             max_generations=generations,
             random_state=42
         )
+        self.input_dim = input_dim
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        # Engine expects numpy arrays
+        """
+        Fits the genetic algorithm.
+        """
+        # The engine treats X as a global vector variable (internally transposes it)
         self.engine.fit(X, y)
+        
+        # [NEW] Log the best fitness (MSE) found during search
+        # This serves as the 'Direct MSE' or 'Sanity Check' for the search phase
+        print(f"[TN-SR] Search Complete. Best Internal MSE: {self.engine.global_best:.4f}")
 
-    def get_structure_info(self) -> dict:
+    def get_structure_info(self) -> Dict[str, Any]:
+        """
+        Parses the symbolic formula to extract active polynomial orders.
+        Returns a 'neuronseek' type structure with ONLY pure_indices.
+        """
         raw_formula = self.engine.neuron
+        
         if not raw_formula:
-            return {'type': 'explicit_terms', 'terms': []}
+            return {
+                'type': 'neuronseek',
+                'pure_indices': [],
+                'interact_indices': [], # Explicitly empty
+                'rank': 1
+            }
             
-        clean_formula = raw_formula.replace('@', '*')
+        # 1. Clean format
+        clean_formula = raw_formula.replace('@@', '**').replace('@', '*')
         print(f"[TN-SR] Best Formula: {clean_formula}")
         
-        parsed_terms = self._parse_global_formula(clean_formula)
+        # 2. Parse degrees
+        active_orders = self._extract_active_degrees(clean_formula)
+        print(f"[TN-SR] Mapped to Pure Indices: {active_orders}")
+
+        # 3. Return as NeuronSeek structure for the Evaluator
         return {
-            'type': 'explicit_terms',
-            'raw_formula': clean_formula,
-            'terms': parsed_terms
+            'type': 'neuronseek',       
+            'pure_indices': active_orders, 
+            'interact_indices': [],     
+            'rank': 1                   
         }
 
-    def _parse_global_formula(self, formula_str: str) -> List[Dict]:
-        """Parses polynomial of global 'x'."""
+    def _extract_active_degrees(self, formula_str: str) -> List[int]:
+        """
+        Parses a polynomial string of 'x' and returns a list of active degrees.
+        """
         try:
             x = Symbol('x')
             expr = expand(sympify(formula_str))
-        except Exception:
+        except Exception as e:
+            print(f"[TN-SR Parse Error] {e}")
             return []
 
-        parsed_terms = []
-        args = expr.args if expr.func == sympy.core.add.Add else [expr]
+        active_degrees = set()
         
-        for arg in args:
-            coeff, term = arg.as_coeff_Mul()
-            if term == sympy.S.One: continue # Bias
+        if expr.func == sympy.core.add.Add:
+            terms = expr.args
+        else:
+            terms = [expr]
             
-            degree = sympy.degree(term, gen=x)
-            if degree > 0:
-                parsed_terms.append({
-                    'type': 'global_power', 
-                    'p': int(degree),
-                    'raw': str(term)
-                })
-        return parsed_terms
-    
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """
-        Executes the best found symbolic formula on input X.
-        """
-        # 1. Retrieve the best formula string
-        # Assumes get_structure_info returns terms containing the formula
-        structure = self.get_structure_info()
-        
-        # Case A: If using gplearn estimator internally
-        if hasattr(self, 'est_gp') and self.est_gp is not None:
-            return self.est_gp.predict(X)
+        for term in terms:
+            # as_coeff_Mul separates "2.0 * x**2" into (2.0, x**2)
+            coeff, var_part = term.as_coeff_Mul()
             
-        # Case B: If only the formula string is available (self.best_formula_str)
-        # e.g., "-x0**4 + x1**2"
-        formula = None
-        if hasattr(self, 'best_formula'): 
-            formula = self.best_formula
-        elif 'terms' in structure:
-            # Try to find formula string in structure info
-            raw = structure['terms'][0]
-            if 'formula' in raw: formula = raw['formula']
-
-        if formula:
-            # Safely map x0, x1... to columns of X
-            # Create a local environment mapping x0, x1... to X[:,0], X[:,1]...
-            local_dict = {}
-            for i in range(X.shape[1]):
-                local_dict[f'x{i}'] = X[:, i]
-                local_dict[f'x_{i}'] = X[:, i] # Support both formats
-            
-            try:
-                # Evaluate the string formula using numpy context
-                # Note: Requires the formula to be valid python/numpy syntax
-                pred = eval(formula, {"__builtins__": None, "np": np}, local_dict)
+            if var_part == sympy.S.One: continue
                 
-                # If result is scalar (e.g., formula is "0.5"), broadcast to array
-                if np.isscalar(pred):
-                    pred = np.full(X.shape[0], pred)
-                return pred
-            except Exception as e:
-                print(f"[Predict Eval Error] {e}")
-                return np.zeros(X.shape[0])
-        
-        # Fallback
-        return np.zeros(X.shape[0])
+            degree = sympy.degree(var_part, gen=x)
+            if degree > 0:
+                active_degrees.add(int(degree))
+                
+        return sorted(list(active_degrees))
