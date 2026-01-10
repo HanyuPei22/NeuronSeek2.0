@@ -10,7 +10,7 @@ class StructuralProbe(nn.Module):
     """
     def __init__(self, input_dim, structure_info, num_classes=1):
         super().__init__()
-        # Force integer types to avoid 'FloatTensor is not a Module' error
+        # Force integer types
         input_dim = int(input_dim)
         num_classes = int(num_classes)
         
@@ -27,12 +27,20 @@ class StructuralProbe(nn.Module):
             self.mode = 'neuronseek'
 
             self.rank = int(structure_info.get('rank', 8)) 
-            #self.rank = int(structure_info.get('rank', 2)) 
+            # Sort orders to ensure alignment
             self.p_ords = sorted(structure_info.get('pure_indices', []))
             self.i_ords = sorted(structure_info.get('interact_indices', []))
+
+            self.bns_pure = nn.ModuleList()
+            self.bns_int = nn.ModuleList()
+
+            # BN layers track the output dimension (num_classes)
+            for _ in self.i_ords:
+                self.bns_int.append(nn.BatchNorm1d(num_classes, affine=True))
+            for _ in self.p_ords:
+                self.bns_pure.append(nn.BatchNorm1d(num_classes, affine=True))
             
-            # Instantiate Interaction Stream 
-            # Use ModuleDict because it contains ParameterLists (which are Modules)
+            # Interaction Parameters
             self.interact_modules = nn.ModuleDict()
             std_dev = 0.05
             for order in self.i_ords:
@@ -42,15 +50,14 @@ class StructuralProbe(nn.Module):
                 ])
                 self.interact_modules[str(order)] = factors
 
-            # Instantiate Pure Stream 
-            # [CRITICAL FIX] Use ParameterDict because it contains Parameters directly
+            # Pure Parameters
             self.pure_modules = nn.ParameterDict()
             for order in self.p_ords:
                 self.pure_modules[str(order)] = nn.Parameter(
                     torch.randn(input_dim, num_classes) * std_dev
                 )
             
-            # Global bias [C]
+            # Global bias
             self.bias = nn.Parameter(torch.zeros(num_classes))
 
         # ======================================================================
@@ -58,14 +65,11 @@ class StructuralProbe(nn.Module):
         # ======================================================================
         elif type_ == 'explicit_terms':
             terms = structure_info.get('terms', [])
-            
-            # Check for Raw Formula (Standard-SR / TN-SR / MetaSymNet)
             if terms and ('gplearn_raw' in terms[0].get('type', '') or 'raw_formula' in structure_info):
                  self.mode = 'symbolic_scaling'
                  self.scale = nn.Linear(1, 1) 
                  return
 
-            # Feature Selection Mode (EQL)
             self.active_indices = []
             for term in terms:
                 self.active_indices.extend(term.get('indices', []))
@@ -83,19 +87,39 @@ class StructuralProbe(nn.Module):
             batch_size = x.size(0)
             output = self.bias.unsqueeze(0).expand(batch_size, -1).clone()
             
-            # Active Pure Orders
-            for order_str, weight in self.pure_modules.items():
-                order = int(order_str)
+            # --- Active Pure Orders ---
+            # [FIXED LOGIC] Apply BN *AFTER* projection to match Searcher
+            for i, order in enumerate(self.p_ords):
+                order_str = str(order)
+                weight = self.pure_modules[order_str]
+                
                 term = x if order == 1 else x.pow(order)
-                output = output + (term @ weight)
+                
+                # 1. Projection: [Batch, D] @ [D, C] -> [Batch, C]
+                term_proj = term @ weight
+                
+                # 2. BatchNorm: Applied on [Batch, C]
+                term_norm = self.bns_pure[i](term_proj)
 
-            # Active Interaction Orders (Strict CP)
-            for order_str, factors in self.interact_modules.items():
+                output = output + term_norm
+
+            # --- Active Interaction Orders ---
+            for i, order in enumerate(self.i_ords):
+                order_str = str(order)
+                factors = self.interact_modules[order_str]
+                
                 projections = [torch.einsum('bd, drc -> brc', x, u) for u in factors]
                 combined = projections[0]
                 for p in projections[1:]:
                     combined = combined * p
-                output = output + torch.sum(combined, dim=1)
+                
+                # 1. Summation: [Batch, R, C] -> [Batch, C]
+                term_sum = torch.sum(combined, dim=1)
+                
+                # 2. BatchNorm: Applied on [Batch, C]
+                term_norm = self.bns_int[i](term_sum)
+                
+                output = output + term_norm
             
             return output
             
@@ -107,15 +131,13 @@ class StructuralProbe(nn.Module):
         # 3. Symbolic Scaling Logic
         elif self.mode == 'symbolic_scaling':
             if formula_pred is None: 
-                # Handle edge case where x is provided but formula_pred is missing
-                # Returns dummy zeros to prevent crash, though logic should prevent this
                 batch_size = x.size(0) if x is not None else 1
                 return torch.zeros(batch_size, 1).to(self.scale.weight.device)
             return self.scale(formula_pred)
             
         return torch.zeros(x.shape[0], 1).to(x.device)
 
-def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_test, epochs=60):
+def retrain_and_evaluate(searcher, structure_info, X_train, y_train, X_test, y_test, epochs=100):
     """
     Retrains the discovered structure.
     Separates logic for standard mini-batch training vs symbolic full-batch scaling.
